@@ -1,0 +1,216 @@
+/* The menu bar popover. Same tokens as the window chrome, one size quieter:
+   at 340px everything has to earn its contrast, so state is carried by colour
+   and spacing rather than by more boxes. */
+
+.glance {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.glance__head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.glance__wordmark {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.glance__summary {
+  font-size: 11px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- the list ---------- */
+
+.glance__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.glance__list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.glance__list::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.glance-row {
+  display: flex;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 8px;
+  transition: background 160ms ease;
+}
+
+.glance-row:hover {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.glance-row[data-phase='ended'] {
+  opacity: 0.55;
+}
+
+.glance-row__dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 50%;
+}
+
+.glance-row__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.glance-row__line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.glance-row__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.glance-row__phase {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.glance-row[data-phase='working'] .glance-row__phase {
+  color: var(--agent);
+}
+
+.glance-row[data-phase='attention'] .glance-row__phase {
+  color: var(--caution);
+}
+
+.glance-row[data-phase='ended'] .glance-row__phase {
+  color: var(--faint);
+}
+
+.glance-row__phrase {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.glance-row__context {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.glance-row__bar {
+  width: 34px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.glance-row__bar > i {
+  display: block;
+  height: 100%;
+  background: #30d158;
+  transition: width 500ms ease;
+}
+
+.glance-row__bar[data-level='warn'] > i {
+  background: var(--caution);
+}
+
+.glance-row__bar[data-level='crit'] > i {
+  background: var(--danger);
+}
+
+/* ---------- empty ---------- */
+
+.glance__empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: rgba(255, 255, 255, 0.13);
+}
+
+.glance__empty p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---------- actions ---------- */
+
+.glance__actions {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.glance__actions button {
+  appearance: none;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: default;
+  transition: background 160ms ease;
+}
+
+.glance__actions button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}

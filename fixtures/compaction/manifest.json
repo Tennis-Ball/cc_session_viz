@@ -1,0 +1,90 @@
+{
+  "recordedAt": "2026-09-19T22:15:27.572Z",
+  "ccVersion": "2.1.267",
+  "sessionCount": 1,
+  "files": [
+    {
+      "path": "projects/-Users-delta-kest-juniper/5489c686-f8db-4d81-a3b4-d8ec8a75dad5.jsonl",
+      "lines": 700,
+      "omittedLines": 1786
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/5489c686-f8db-4d81-a3b4-d8ec8a75dad5/subagents/agent-a9177aaafd302e254.jsonl",
+      "lines": 80,
+      "omittedLines": 34
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/5489c686-f8db-4d81-a3b4-d8ec8a75dad5/subagents/agent-a9177aaafd302e254.meta.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/5489c686-f8db-4d81-a3b4-d8ec8a75dad5/subagents/agent-a46726c650f1a779c.jsonl",
+      "lines": 80,
+      "omittedLines": 56
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/5489c686-f8db-4d81-a3b4-d8ec8a75dad5/subagents/agent-a46726c650f1a779c.meta.json",
+      "lines": 1
+    }
+  ],
+  "anonymized": true,
+  "notes": [
+    "main transcript capped at 700 lines of 2486: first 200 kept, then a gap of 1786 lines, then the tail",
+    "no live registry entry matched this session",
+    "subagent transcripts capped at 80 lines each",
+    "recorded as session 5489c686-f8db-4d81-a3b4-d8ec8a75dad5 under cwd /Users/delta/kest/juniper; ids are remapped but keep their original shape",
+    "anonymized with seed 1337; re-running with the same seed reproduces these files byte for byte"
+  ],
+  "coverage": {
+    "lineTypes": {
+      "last-prompt": 37,
+      "mode": 36,
+      "permission-mode": 36,
+      "atis-latch": 36,
+      "bridge-session": 37,
+      "attachment": 203,
+      "file-history-snapshot": 7,
+      "user": 154,
+      "ai-title": 35,
+      "assistant": 255,
+      "system/stop_hook_summary": 5,
+      "system/turn_duration": 5,
+      "queue-operation": 10,
+      "system/compact_boundary": 1,
+      "system/informational": 1,
+      "cost-state": 2,
+      "(none)": 2
+    },
+    "attachmentTypes": {
+      "hook_success": 11,
+      "hook_additional_context": 2,
+      "environment": 26,
+      "model": 4,
+      "deferred_tools_delta": 4,
+      "agent_listing_delta": 4,
+      "mcp_instructions_delta": 4,
+      "skill_listing": 3,
+      "auto_mode": 4,
+      "total_tokens_reminder": 107,
+      "instructions": 4,
+      "session_context": 4,
+      "date": 4,
+      "remote_session_change": 2,
+      "prompt_snapshot": 8,
+      "queued_command": 4,
+      "command_permissions": 1,
+      "file": 5,
+      "invoked_skills": 1,
+      "deferred_tools_record": 1
+    },
+    "toolNames": {
+      "Bash": 140,
+      "Skill": 1
+    },
+    "markers": {
+      "origin:human": 5,
+      "task-notification": 14,
+      "compact_boundary": 1
+    }
+  }
+}

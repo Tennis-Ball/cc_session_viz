@@ -1,0 +1,315 @@
+/* The settings sheet: one panel over whatever you were looking at. */
+
+.sheet-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(6, 6, 9, 0.46);
+  backdrop-filter: blur(3px);
+  animation: sheet-fade 160ms ease-out;
+}
+
+.sheet {
+  width: 380px;
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px 22px 28px;
+  background: rgba(20, 20, 24, 0.94);
+  backdrop-filter: blur(24px);
+  border-left: 1px solid var(--border);
+  animation: sheet-slide 220ms cubic-bezier(0.22, 0.8, 0.28, 1);
+}
+
+@keyframes sheet-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes sheet-slide {
+  from {
+    transform: translateX(22px);
+    opacity: 0;
+  }
+}
+
+.sheet__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.sheet__head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.sheet__close {
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  font-size: 13px;
+  cursor: default;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.sheet__close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sheet__foot {
+  margin-top: 26px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.group {
+  margin-bottom: 22px;
+}
+
+.group h3 {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.group .hint {
+  margin: 0 0 10px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--faint);
+}
+
+.group .row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* ---------- theme picker ---------- */
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+  text-align: left;
+}
+
+.theme-card[data-selected='true'] {
+  color: var(--text);
+}
+
+.theme-card__sky {
+  position: relative;
+  display: block;
+  height: 62px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.theme-card[data-selected='true'] .theme-card__sky {
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28);
+}
+
+/* The three face tones, arranged as a little isometric block. */
+.theme-card__sky i {
+  position: absolute;
+  bottom: 14px;
+  width: 22px;
+  height: 13px;
+}
+
+.theme-card__sky i:nth-of-type(1) {
+  left: 50%;
+  margin-left: -11px;
+  bottom: 27px;
+  transform: skewX(0deg) scaleY(0.62);
+  border-radius: 2px;
+}
+
+.theme-card__sky i:nth-of-type(2) {
+  left: 50%;
+  margin-left: -11px;
+  transform: skewY(14deg);
+}
+
+.theme-card__sky i:nth-of-type(3) {
+  left: 50%;
+  margin-left: 11px;
+  transform: skewY(-14deg);
+}
+
+.theme-card__sky em {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.theme-card__name {
+  font-size: 11.5px;
+  padding-left: 2px;
+}
+
+/* ---------- controls ---------- */
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 8px 0;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: default;
+}
+
+.toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toggle__track {
+  flex: 0 0 auto;
+  position: relative;
+  width: 30px;
+  height: 18px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.14);
+  transition: background 140ms ease;
+}
+
+.toggle__track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 160ms cubic-bezier(0.3, 0.9, 0.3, 1);
+}
+
+.toggle input:checked + .toggle__track {
+  background: var(--accent);
+}
+
+.toggle input:checked + .toggle__track::after {
+  transform: translateX(12px);
+}
+
+.checks {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0 12px;
+}
+
+.slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 2px;
+  font-size: 12.5px;
+}
+
+.slider span {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.slider input {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.slider em {
+  flex: 0 0 auto;
+  font-style: normal;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.time {
+  padding: 3px 7px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.segmented--sheet {
+  margin-top: 8px;
+  width: 100%;
+}
+
+.segmented--sheet button {
+  flex: 1;
+}
+
+/* ---------- a note under a control, and a plain action button ---------- */
+
+.sheet__note {
+  margin: 10px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.sheet__note code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  font-family: Menlo, Monaco, monospace;
+  font-size: 10.5px;
+  user-select: all;
+}
+
+.sheet__action {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sheet__action:hover {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.05);
+}

@@ -1,0 +1,101 @@
+{
+  "recordedAt": "2026-09-19T22:15:27.318Z",
+  "ccVersion": "2.1.223",
+  "sessionCount": 1,
+  "files": [
+    {
+      "path": "projects/-Users-delta-kest-juniper-ember-juniperb-emberce-flintnimbusnimbusmar/00def71f-077a-42a8-842c-d1dd7feeaac7.jsonl",
+      "lines": 497
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper-ember-juniperb-emberce-flintnimbusnimbusmar/00def71f-077a-42a8-842c-d1dd7feeaac7/subagents/agent-af8fa669b45c1d01f.jsonl",
+      "lines": 242
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper-ember-juniperb-emberce-flintnimbusnimbusmar/00def71f-077a-42a8-842c-d1dd7feeaac7/subagents/agent-af8fa669b45c1d01f.meta.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper-ember-juniperb-emberce-flintnimbusnimbusmar/00def71f-077a-42a8-842c-d1dd7feeaac7/subagents/agent-aff8a55fe443d91d6.jsonl",
+      "lines": 195
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper-ember-juniperb-emberce-flintnimbusnimbusmar/00def71f-077a-42a8-842c-d1dd7feeaac7/subagents/agent-aff8a55fe443d91d6.meta.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper-ember-juniperb-emberce-flintnimbusnimbusmar/00def71f-077a-42a8-842c-d1dd7feeaac7/subagents/agent-aa3cedb1a3e663b94.jsonl",
+      "lines": 67
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper-ember-juniperb-emberce-flintnimbusnimbusmar/00def71f-077a-42a8-842c-d1dd7feeaac7/subagents/agent-aa3cedb1a3e663b94.meta.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper-ember-juniperb-emberce-flintnimbusnimbusmar/00def71f-077a-42a8-842c-d1dd7feeaac7/subagents/agent-a13b21e4913143073.jsonl",
+      "lines": 124
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper-ember-juniperb-emberce-flintnimbusnimbusmar/00def71f-077a-42a8-842c-d1dd7feeaac7/subagents/agent-a13b21e4913143073.meta.json",
+      "lines": 1
+    },
+    {
+      "path": "sessions/1751.json",
+      "lines": 1
+    }
+  ],
+  "anonymized": true,
+  "notes": [
+    "includes the live registry entry for pid 1751",
+    "subagent transcripts capped at 400 lines each",
+    "recorded as session 00def71f-077a-42a8-842c-d1dd7feeaac7 under cwd /Users/delta/kest/juniper/ember/juniperb/emberce/flintnimbusnimbusmar; ids are remapped but keep their original shape",
+    "anonymized with seed 1337; re-running with the same seed reproduces these files byte for byte"
+  ],
+  "coverage": {
+    "lineTypes": {
+      "last-prompt": 17,
+      "mode": 16,
+      "permission-mode": 16,
+      "bridge-session": 21,
+      "attachment": 60,
+      "file-history-snapshot": 3,
+      "user": 339,
+      "ai-title": 16,
+      "assistant": 505,
+      "file-history-delta": 1,
+      "system/stop_hook_summary": 29,
+      "system/turn_duration": 29,
+      "queue-operation": 69,
+      "system/away_summary": 1,
+      "atis-latch": 1,
+      "cost-state": 1,
+      "system/informational": 1,
+      "(none)": 5
+    },
+    "attachmentTypes": {
+      "hook_success": 33,
+      "hook_additional_context": 2,
+      "deferred_tools_delta": 7,
+      "agent_listing_delta": 1,
+      "skill_listing": 5,
+      "command_permissions": 2,
+      "task_reminder": 10
+    },
+    "toolNames": {
+      "Bash": 248,
+      "Skill": 2,
+      "Read": 24,
+      "Write": 16,
+      "AskUserQuestion": 1,
+      "Agent": 4,
+      "Edit": 5
+    },
+    "markers": {
+      "origin:human": 2,
+      "task-notification": 67,
+      "origin:task-notification": 29,
+      "interrupted": 2,
+      "denial:user-rejected": 1
+    }
+  }
+}

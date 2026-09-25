@@ -1,0 +1,86 @@
+{
+  "recordedAt": "2026-09-19T22:15:30.708Z",
+  "ccVersion": "2.1.238",
+  "sessionCount": 1,
+  "files": [
+    {
+      "path": "projects/-Users-delta-kest-juniper/d064e158-3277-4fb4-b788-c13aa6520a46.jsonl",
+      "lines": 800,
+      "omittedLines": 725
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/d064e158-3277-4fb4-b788-c13aa6520a46/subagents/agent-a449c86ccb29781f0.jsonl",
+      "lines": 144
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/d064e158-3277-4fb4-b788-c13aa6520a46/subagents/agent-a449c86ccb29781f0.meta.json",
+      "lines": 1
+    }
+  ],
+  "anonymized": true,
+  "notes": [
+    "main transcript capped at 800 lines of 1525: first 200 kept, then a gap of 725 lines, then the tail",
+    "no live registry entry matched this session",
+    "subagent transcripts capped at 150 lines each",
+    "recorded as session d064e158-3277-4fb4-b788-c13aa6520a46 under cwd /Users/delta/kest/juniper; ids are remapped but keep their original shape",
+    "anonymized with seed 1337; re-running with the same seed reproduces these files byte for byte"
+  ],
+  "coverage": {
+    "lineTypes": {
+      "last-prompt": 44,
+      "mode": 43,
+      "permission-mode": 43,
+      "atis-latch": 43,
+      "bridge-session": 44,
+      "attachment": 137,
+      "file-history-snapshot": 6,
+      "user": 178,
+      "ai-title": 44,
+      "assistant": 310,
+      "queue-operation": 9,
+      "agent-name": 30,
+      "system/stop_hook_summary": 5,
+      "system/turn_duration": 5,
+      "system/away_summary": 2,
+      "system/compact_boundary": 1,
+      "(none)": 1
+    },
+    "attachmentTypes": {
+      "hook_success": 11,
+      "hook_additional_context": 2,
+      "deferred_tools_delta": 3,
+      "agent_listing_delta": 2,
+      "skill_listing": 2,
+      "plan_mode": 2,
+      "total_tokens_reminder": 101,
+      "nested_memory": 1,
+      "queued_command": 2,
+      "plan_mode_exit": 2,
+      "auto_mode": 2,
+      "file": 5,
+      "plan_file_reference": 1,
+      "date_change": 1
+    },
+    "toolNames": {
+      "Read": 10,
+      "Bash": 135,
+      "ToolSearch": 4,
+      "mcp__claude_ai_Google_Drive__read_file_content": 3,
+      "mcp__claude_ai_Google_Drive__get_file_metadata": 3,
+      "Agent": 1,
+      "mcp__claude_ai_Google_Drive__download_file_content": 2,
+      "mcp__claude_ai_Slack__slack_search_public_and_private": 2,
+      "mcp__claude_ai_Slack__slack_read_channel": 2,
+      "AskUserQuestion": 2,
+      "Write": 2,
+      "ExitPlanMode": 2
+    },
+    "markers": {
+      "origin:human": 4,
+      "task-notification": 9,
+      "denial:automode-blocked": 1,
+      "origin:task-notification": 1,
+      "compact_boundary": 1
+    }
+  }
+}

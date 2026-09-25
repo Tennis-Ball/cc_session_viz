@@ -1,0 +1,263 @@
+/* Office mode is nearly chrome-free: the scene is the interface. */
+
+.office-view {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.office-view canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+.office-view canvas:active {
+  cursor: grabbing;
+}
+
+/*
+ * Labels: quiet, typographic, never boxed.
+ *
+ * The ink follows the clock. The office runs from cream at noon to deep indigo
+ * at 2am, so one fixed colour is unreadable at one end or the other — at night
+ * the dark ink these started as disappeared into the sky entirely. The halo is
+ * what makes a single colour work at all: a label sits on a platform's near
+ * edge, so it crosses both the pale floor and the dark void, and a contrasting
+ * glow behind it keeps it legible over each without putting a panel in the
+ * world.
+ */
+
+.office-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  /*
+   * As strong as a desk's nameplate. These were set two steps lighter to keep
+   * them quiet, which worked when a room's edge was bare floor; now that the
+   * edge is usually a wall, a pale letter-spaced line at 42% lands dark-on-dark
+   * and is simply not there.
+   */
+  color: var(--office-ink-strong, rgba(38, 26, 30, 0.62));
+  text-shadow:
+    0 0 5px var(--office-ink-halo, rgba(255, 244, 236, 0.75)),
+    0 0 11px var(--office-ink-halo, rgba(255, 244, 236, 0.55));
+  user-select: none;
+}
+
+.office-label--desk {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: var(--office-ink-strong, rgba(38, 26, 30, 0.62));
+}
+
+.office-label__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+/*
+ * The figure card, bottom-left.
+ *
+ * Parked in a corner rather than floating over the figure: at this zoom the
+ * card is wider than the person it describes, so following them meant covering
+ * them. Pointer events are off except on the buttons, so the card never eats a
+ * camera drag that happens to start over it.
+ */
+
+.figure-card {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  z-index: 6;
+  width: 232px;
+  padding: 12px 14px 11px;
+  border-radius: 13px;
+  background: rgba(20, 18, 24, 0.72);
+  backdrop-filter: blur(16px) saturate(140%);
+  box-shadow: 0 12px 34px rgba(20, 12, 18, 0.32);
+  color: rgba(255, 255, 255, 0.92);
+  font-family: var(--font-ui);
+  animation: figure-card-in 150ms ease-out;
+  user-select: none;
+  pointer-events: none;
+}
+
+.figure-card button {
+  pointer-events: auto;
+}
+
+@keyframes figure-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+}
+
+.figure-card h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.figure-card__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.figure-card__name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.figure-card__doing {
+  margin: 0;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.76);
+}
+
+.figure-card__target {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.figure-card__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+  margin: 9px 0 0;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.figure-card__facts div {
+  display: flex;
+  gap: 5px;
+  align-items: baseline;
+}
+
+.figure-card__facts dt {
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.figure-card__facts dd {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.figure-card__context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.figure-card__bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.figure-card__bar span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+}
+
+.figure-card__pct {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.figure-card__note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.figure-card__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 11px;
+}
+
+.figure-card button,
+.figure-card__close {
+  pointer-events: auto;
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.82);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.figure-card button:hover {
+  border-color: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.figure-card--quiet {
+  width: 210px;
+}
+
+.figure-card--quiet .figure-card__close {
+  margin-top: 10px;
+}
+
+/* Reduced motion: keep the layout, drop the movement. */
+:root[data-motion='reduced'] .figure-card {
+  animation: none;
+}
+
+/* Context loss: say what happened instead of showing a black rectangle. */
+
+.office-lost {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 10, 12, 0.55);
+  backdrop-filter: blur(6px);
+  font-family: var(--font-ui);
+  text-align: center;
+}
+
+.office-lost p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.office-lost button {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: default;
+}

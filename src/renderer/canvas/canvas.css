@@ -1,0 +1,580 @@
+/* Canvas mode chrome. Values mirror nodeterm's dark theme so the board reads
+   as the same tool: black board, #282828 cards, copper agent accents. */
+
+.canvas-view {
+  position: absolute;
+  inset: 0;
+  background: var(--canvas-bg);
+}
+
+.canvas-view .react-flow__renderer,
+.canvas-view .react-flow__pane {
+  cursor: default;
+}
+
+.canvas-view .react-flow__attribution {
+  display: none;
+}
+
+/* ---------- terminal card ---------- */
+
+.term-node {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--node-color, var(--agent));
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  font-family: var(--font-mono);
+}
+
+.term-node[data-phase='working'] {
+  box-shadow:
+    0 0 0 1px rgba(217, 119, 87, 0.35),
+    0 0 14px 1px rgba(217, 119, 87, 0.22),
+    0 8px 28px rgba(0, 0, 0, 0.4);
+}
+
+.term-node[data-unread='true'] {
+  box-shadow:
+    0 0 0 1px rgba(10, 132, 255, 0.5),
+    0 0 16px 1px rgba(10, 132, 255, 0.35),
+    0 8px 28px rgba(0, 0, 0, 0.4);
+}
+
+.term-node[data-phase='attention'] {
+  box-shadow:
+    0 0 0 1px rgba(255, 69, 58, 0.4),
+    0 0 16px 1px rgba(255, 69, 58, 0.25),
+    0 8px 28px rgba(0, 0, 0, 0.4);
+}
+
+.term-node[data-phase='ended'] {
+  opacity: 0.55;
+}
+
+.term-node__header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--panel-header);
+  font-family: var(--font-ui);
+  border-bottom: 1px solid var(--border);
+}
+
+.term-node__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.term-node__title {
+  font-size: 13px;
+  font-weight: 600;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-node__spacer {
+  flex: 1 1 auto;
+}
+
+.term-node__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: 6px 8px 4px 10px;
+  background: var(--terminal-bg, #1e1e1e);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.term-node__status {
+  flex: 0 0 auto;
+  padding: 4px 10px 6px;
+  background: var(--terminal-bg, #1e1e1e);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* ---------- header chips ---------- */
+
+.ctx-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 10px;
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ctx-pill__model {
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ctx-pill__bar {
+  position: relative;
+  width: 28px;
+  height: 5px;
+  border-radius: 2.5px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.ctx-pill__bar > i {
+  display: block;
+  height: 100%;
+  background: #30d158;
+  transition: width 500ms ease;
+}
+
+.ctx-pill__bar[data-level='warn'] > i {
+  background: var(--caution);
+}
+
+.ctx-pill__bar[data-level='crit'] > i {
+  background: var(--danger);
+}
+
+/* Where auto-compact will kick in. */
+.ctx-pill__bar > u {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-family: var(--font-ui);
+  text-transform: uppercase;
+  color: var(--agent);
+}
+
+.badge__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+.badge--attention {
+  color: var(--caution);
+}
+
+.badge--ended {
+  color: var(--muted);
+}
+
+.badge--ended .badge__dot {
+  animation: none;
+}
+
+.mini-chip {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+.mini-chip--simulated {
+  color: #cbb6f5;
+  border-color: rgba(203, 182, 245, 0.3);
+}
+
+/* ---------- tui body ---------- */
+
+.tui {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.32;
+  color: #e6e6e6;
+  white-space: pre;
+  overflow: hidden;
+}
+
+.tui__line {
+  min-height: 17px;
+}
+
+.tui__line[data-band='user'] {
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 3px;
+}
+
+.tui .dim {
+  color: rgba(255, 255, 255, 0.45);
+}
+.tui .bold {
+  font-weight: 700;
+  color: #fff;
+}
+.tui .code {
+  color: #6cb0ff;
+}
+.tui .user {
+  color: rgba(255, 255, 255, 0.85);
+}
+.tui .bullet {
+  color: #fff;
+}
+.tui .bullet-tool {
+  color: var(--success);
+}
+.tui .bullet-error {
+  color: var(--danger);
+}
+.tui .result {
+  color: rgba(255, 255, 255, 0.62);
+}
+.tui .thinking {
+  color: rgba(255, 255, 255, 0.4);
+}
+.tui .turn,
+.tui .compact {
+  color: rgba(255, 255, 255, 0.4);
+}
+.tui .notice {
+  color: rgba(255, 255, 255, 0.55);
+}
+.tui .notice-warn {
+  color: var(--warn);
+}
+.tui .notice-error {
+  color: var(--danger);
+}
+.tui .inbound {
+  color: #6cb0ff;
+}
+.tui .divider {
+  color: rgba(255, 255, 255, 0.22);
+}
+.tui .task-done {
+  color: var(--success);
+}
+.tui .task-open {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.tui__spinner {
+  color: var(--agent);
+}
+
+/* ---------- status line ---------- */
+
+.statusline {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.55);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.statusline__bar {
+  width: 54px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.statusline__bar > i {
+  display: block;
+  height: 100%;
+  background: #30d158;
+}
+
+.statusline__mode {
+  color: var(--agent);
+}
+
+/* ---------- compact agent card ---------- */
+
+.agent-node {
+  width: 100%;
+  height: 100%;
+  background: var(--surface-deep);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--agent);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.agent-node__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-node__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.agent-node[data-status='running'] .agent-node__dot {
+  background: var(--agent);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+.agent-node[data-status='failed'] .agent-node__dot,
+.agent-node[data-status='stopped'] .agent-node__dot {
+  background: var(--danger);
+}
+
+.agent-node[data-status='stale'] {
+  opacity: 0.6;
+}
+
+.agent-node__type {
+  font-weight: 600;
+}
+
+.agent-node__state {
+  margin-left: auto;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.agent-node__task {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.agent-node__meta {
+  margin-top: 6px;
+  font-size: 10.5px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- usage panel ---------- */
+
+.usage-panel {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 4;
+  width: 210px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  /* Quiet until you look at it: the terminal cards come first. */
+  opacity: 0.88;
+  transition: opacity 180ms ease;
+}
+
+.usage-panel:hover {
+  opacity: 1;
+}
+
+.usage-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 7px 9px;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+.usage-panel__mark {
+  color: var(--agent);
+}
+
+.usage-panel__title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.usage-panel__sep,
+.usage-panel__stamp {
+  color: var(--faint);
+}
+
+.usage-panel__tag {
+  margin-left: auto;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* The states that need a hand from the user read a shade warmer than the ones
+   that will clear on their own. Still a word in a corner, never an alarm. */
+.usage-panel[data-state='signedOut'] .usage-panel__tag,
+.usage-panel[data-state='expired'] .usage-panel__tag,
+.usage-panel[data-state='noAccess'] .usage-panel__tag {
+  color: var(--caution);
+}
+
+.usage-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 0 9px 9px;
+}
+
+.usage-row__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.usage-row__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The limit actually in force reads a shade louder than the rest. */
+.usage-row[data-binding='true'] .usage-row__label {
+  color: var(--text);
+}
+
+.usage-row__pct {
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-row__bar {
+  display: block;
+  height: 4px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.usage-row__bar > i {
+  display: block;
+  height: 100%;
+  background: #30d158;
+  transition: width 600ms ease;
+}
+
+.usage-row__bar[data-level='warn'] > i {
+  background: var(--caution);
+}
+
+.usage-row__bar[data-level='crit'] > i {
+  background: var(--danger);
+}
+
+.usage-row__reset {
+  display: block;
+  margin: 3px 0 0;
+  font-size: 10px;
+  color: var(--faint);
+}
+
+/* What went wrong, and the way out of it. Two lines, stacked, in the same
+   quiet grey as the countdowns: a problem the user can fix is not an alarm. */
+.usage-panel__trouble {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--faint);
+}
+
+.usage-panel__trouble > strong {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.usage-panel__foot {
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- react-flow overrides ---------- */
+
+.react-flow__node {
+  cursor: default;
+}
+
+.react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.react-flow__controls button {
+  background: rgba(40, 40, 42, 0.9);
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  fill: currentColor;
+}
+
+.react-flow__controls button:hover {
+  background: rgba(60, 60, 62, 0.95);
+}
+
+.react-flow__minimap {
+  background: rgba(40, 40, 42, 0.85);
+  border-radius: 10px;
+}

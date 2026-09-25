@@ -1,0 +1,48 @@
+appId: dev.masonchoi.atrium
+productName: Atrium
+copyright: Mason Choi
+
+directories:
+  output: dist
+  buildResources: resources
+
+files:
+  - out/**
+  - resources/**
+  - package.json
+
+# The app reads ~/.claude and shells out to `ps`, so it cannot run in the
+# hardened sandbox. It is signed ad hoc for local use: no notarisation, no
+# Developer ID, nothing leaves this machine.
+mac:
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: dir
+      arch: [arm64]
+  category: public.app-category.developer-tools
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  darkModeSupport: true
+  icon: resources/icon.icns
+  extendInfo:
+    # No camera, mic, location or contacts: nothing to declare, and the app
+    # never asks for anything it does not read.
+    LSApplicationCategoryType: public.app-category.developer-tools
+    NSHighResolutionCapable: true
+
+dmg:
+  title: Atrium
+  contents:
+    - x: 140
+      y: 190
+      type: file
+    - x: 400
+      y: 190
+      type: link
+      path: /Applications
+
+# electron-builder rebuilds native modules by default; there are none here, and
+# skipping it keeps a package under a minute.
+npmRebuild: false

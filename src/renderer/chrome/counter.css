@@ -1,0 +1,288 @@
+/* The session counter and the panel that explains it. The chip keeps the title
+   bar's own vocabulary — .chip and .dot come from styles.css — and the panel
+   borrows the menu bar popover's rhythm, because it is the same list. */
+
+.counter {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Wider than .chip's own gap so two counts read as two things, not four. */
+.counter__chip {
+  gap: 9px;
+  cursor: default;
+}
+
+.counter__chip[aria-expanded='true'] {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+}
+
+.counter__count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* The 8px under the chip is padding rather than a margin: the pointer crosses
+   it on the way into the panel, and a real gap would count as leaving. */
+.counter__pop {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  padding-top: 8px;
+  z-index: 20;
+  -webkit-app-region: no-drag;
+}
+
+.counter__panel {
+  width: 380px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(16, 16, 18, 0.93);
+  backdrop-filter: blur(30px) saturate(1.3);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  animation: counter-in 140ms ease-out;
+}
+
+:root[data-motion='reduced'] .counter__panel {
+  animation: none;
+}
+
+@keyframes counter-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---------- head and legend ---------- */
+
+.counter__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px 0;
+}
+
+.counter__wordmark {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.counter__summary {
+  font-size: 11px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.counter__legend {
+  padding: 9px 14px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.counter__note {
+  margin: 0 0 9px;
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.counter__legend ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.counter__legend li {
+  display: grid;
+  grid-template-columns: 7px 62px 1fr;
+  align-items: start;
+  gap: 9px;
+}
+
+.counter__legend .dot {
+  margin-top: 5px;
+}
+
+.counter__legend-name {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.counter__legend-why {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* ---------- the sessions ---------- */
+
+.counter__list {
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 318px;
+  overflow-y: auto;
+}
+
+.counter__list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.counter__list::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.counter-row {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  gap: 10px;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+  transition: background 160ms ease;
+}
+
+.counter-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.counter-row:focus-visible {
+  background: rgba(255, 255, 255, 0.05);
+  outline: 1px solid rgba(255, 255, 255, 0.28);
+  outline-offset: -1px;
+}
+
+.counter-row[data-phase='ended'] {
+  opacity: 0.55;
+}
+
+.counter-row__dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 50%;
+}
+
+.counter-row__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.counter-row__line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.counter-row__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.counter-row__phase {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.counter-row[data-phase='working'] .counter-row__phase {
+  color: var(--agent);
+}
+
+.counter-row[data-phase='attention'] .counter-row__phase {
+  color: var(--caution);
+}
+
+.counter-row[data-phase='ended'] .counter-row__phase {
+  color: var(--faint);
+}
+
+.counter-row__phrase {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.counter-row__context {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.counter-row__bar {
+  width: 34px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.counter-row__bar > i {
+  display: block;
+  height: 100%;
+  background: #30d158;
+  transition: width 500ms ease;
+}
+
+.counter-row__bar[data-level='warn'] > i {
+  background: var(--caution);
+}
+
+.counter-row__bar[data-level='crit'] > i {
+  background: var(--danger);
+}
+
+/* ---------- nothing to list ---------- */
+
+.counter__empty {
+  margin: 0;
+  padding: 22px 14px 26px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--muted);
+}

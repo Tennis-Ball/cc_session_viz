@@ -1,0 +1,165 @@
+{
+  "recordedAt": "2026-09-19T22:15:30.968Z",
+  "ccVersion": "2.1.235",
+  "sessionCount": 1,
+  "files": [
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057.jsonl",
+      "lines": 300,
+      "omittedLines": 11582
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/workflows/wf_067c3ee7-2d6.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/workflows/wf_40d433ff-fbf.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/workflows/wf_dd695a57-7c7.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-acaee4a4c0fc07081.jsonl",
+      "lines": 20,
+      "omittedLines": 39
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-acaee4a4c0fc07081.meta.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-af8dbc323eead799f.jsonl",
+      "lines": 6
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-af8dbc323eead799f.meta.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-a8b1840ac2e8719d6.jsonl",
+      "lines": 20,
+      "omittedLines": 17
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-a8b1840ac2e8719d6.meta.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-a8b82d363c3b887a3.jsonl",
+      "lines": 20,
+      "omittedLines": 84
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-a8b82d363c3b887a3.meta.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-aaff553a3e9f6db2a.jsonl",
+      "lines": 20,
+      "omittedLines": 19
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-aaff553a3e9f6db2a.meta.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-a2779d2532fdde04c.jsonl",
+      "lines": 20,
+      "omittedLines": 12
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-a2779d2532fdde04c.meta.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-a90fc1f5a162df949.jsonl",
+      "lines": 20,
+      "omittedLines": 32
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-a90fc1f5a162df949.meta.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-a513aa4b107f6e69e.jsonl",
+      "lines": 20,
+      "omittedLines": 26
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-a513aa4b107f6e69e.meta.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-a73cc090a6093e317.jsonl",
+      "lines": 20,
+      "omittedLines": 20
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-a73cc090a6093e317.meta.json",
+      "lines": 1
+    },
+    {
+      "path": "projects/-Users-delta-kest-juniper/c2315754-ba9a-4cc0-949e-bb34fe83f057/subagents/workflows/wf_067c3ee7-2d6/agent-a6b45767df1e96d7d.jsonl",
+      "lines": 20,
+      "omittedLines": 40
+    }
+  ],
+  "anonymized": true,
+  "notes": [
+    "main transcript capped at 300 lines of 11882: first 200 kept, then a gap of 11582 lines, then the tail",
+    "no live registry entry matched this session",
+    "240 sidecar file(s) omitted once the 2.5 MB budget was reached",
+    "subagent transcripts capped at 20 lines each",
+    "recorded as session c2315754-ba9a-4cc0-949e-bb34fe83f057 under cwd /Users/delta/kest/juniper; ids are remapped but keep their original shape",
+    "anonymized with seed 1337; re-running with the same seed reproduces these files byte for byte"
+  ],
+  "coverage": {
+    "lineTypes": {
+      "last-prompt": 13,
+      "mode": 12,
+      "permission-mode": 12,
+      "bridge-session": 13,
+      "attachment": 69,
+      "file-history-snapshot": 5,
+      "user": 124,
+      "atis-latch": 13,
+      "ai-title": 11,
+      "assistant": 184,
+      "system/stop_hook_summary": 4,
+      "system/turn_duration": 4,
+      "queue-operation": 6,
+      "pr-link": 5,
+      "frame-link": 4,
+      "agent-name": 3,
+      "cost-state": 2,
+      "artifact-autoreact-ledger": 1,
+      "artifact-comment-monitor": 1,
+      "(none)": 12
+    },
+    "attachmentTypes": {
+      "hook_success": 7,
+      "hook_additional_context": 1,
+      "deferred_tools_delta": 11,
+      "agent_listing_delta": 1,
+      "skill_listing": 11,
+      "total_tokens_reminder": 35,
+      "ultra_effort_enter": 1,
+      "date_change": 1,
+      "queued_command": 1
+    },
+    "toolNames": {
+      "Bash": 66,
+      "Read": 38,
+      "Workflow": 2,
+      "StructuredOutput": 1
+    },
+    "markers": {
+      "origin:human": 2,
+      "task-notification": 7,
+      "origin:task-notification": 2,
+      "denial:automode-unavailable": 1
+    }
+  }
+}
