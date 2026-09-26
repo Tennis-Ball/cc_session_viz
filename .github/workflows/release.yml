@@ -95,8 +95,13 @@ jobs:
             spctl -a -vvv -t exec "$app"
           fi
 
+      # Generated from inside dist/ so the file records a bare filename. With
+      # the `dist/` prefix in it, `shasum -a 256 -c SHA256SUMS.txt` fails in
+      # the directory someone actually downloaded the two files into, which
+      # makes the checksum useless to the only person who would run it.
       - name: Checksum
-        run: shasum -a 256 dist/*.dmg | tee dist/SHA256SUMS.txt
+        working-directory: dist
+        run: shasum -a 256 *.dmg | tee SHA256SUMS.txt
 
       - name: Publish the release
         uses: softprops/action-gh-release@v3

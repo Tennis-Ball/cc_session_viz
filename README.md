@@ -34,11 +34,13 @@ That is Gatekeeper telling you the app is not signed with a paid Apple Developer
 - **macOS 15 (Sequoia) and later** — open Atrium, dismiss the dialog, then go to  **System Settings → Privacy & Security**, scroll to the bottom, and click **Open Anyway**.
 - **macOS 14 and earlier** — right-click Atrium in Applications and choose **Open**.
 
-**If it instead says "Atrium is damaged and can't be opened"**, the download was corrupted. Check the file against `SHA256SUMS.txt` on the release page and download it again:
+**If it instead says "Atrium is damaged and can't be opened"**, the download was corrupted — that message means macOS could not validate the bundle at all, which is a different thing from not recognising who signed it. Download `SHA256SUMS.txt` from the same release, put it next to the `.dmg`, and check:
 
 ```bash
-shasum -a 256 ~/Downloads/Atrium-*.dmg
+cd ~/Downloads && shasum -a 256 -c SHA256SUMS.txt
 ```
+
+If that does not say `OK`, download the `.dmg` again.
 
 </details>
 
