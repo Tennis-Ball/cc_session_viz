@@ -55,7 +55,6 @@ jobs:
           fi
 
       - name: Build the universal DMG
-        run: npm run dist
         env:
           # electron-builder picks these up on its own. They are absent until
           # an Apple Developer certificate is added to the repo's secrets, and
@@ -67,6 +66,16 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # A secret that does not exist still *defines* its variable, as the
+          # empty string. electron-builder reads CSC_LINK itself and treats
+          # defined-but-empty as "there is a certificate", then dies resolving
+          # "" as a file path. Unsetting the empty ones is what makes the
+          # unsigned path work, and costs nothing once the secrets are real.
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!name}" ] || unset "$name"
+          done
+          npm run dist
 
       # Proof the artifact is intact before anyone downloads it. A bundle whose
       # signature does not validate is the difference between "unidentified

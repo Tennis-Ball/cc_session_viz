@@ -14,8 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
-    "dist": "electron-vite build && electron-builder --mac --universal --config electron-builder.config.cjs",
-    "dist:fast": "electron-vite build && electron-builder --mac --arm64 --config electron-builder.config.cjs"
+    "dist": "electron-vite build && electron-builder --mac --universal --config electron-builder.config.cjs --publish never",
+    "dist:fast": "electron-vite build && electron-builder --mac --arm64 --config electron-builder.config.cjs --publish never"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.6",
