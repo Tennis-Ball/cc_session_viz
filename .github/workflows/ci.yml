@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to a branch makes the first one's run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      # Not the end-to-end suite: it drives a real Electron window and takes
+      # six minutes, which is the wrong trade for every push. What it is worth
+      # proving on every push is that the thing still *packages* — a broken
+      # build config is invisible to tsc and to vitest, and it is the failure
+      # that would reach people as a download that does not open.
+      - name: Package
+        run: npm run build && npx electron-builder --mac dir --arm64 --config electron-builder.config.cjs
+
+      - name: The bundle is properly sealed
+        run: |
+          codesign --verify --deep --strict dist/mac-arm64/Atrium.app
+          codesign -dv --verbose=2 dist/mac-arm64/Atrium.app 2>&1 | grep -q 'Sealed Resources'

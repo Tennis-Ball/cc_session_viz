@@ -1,0 +1,127 @@
+name: Release
+
+# Pushing a tag that starts with `v` (e.g. v0.2.0) builds the app and publishes
+# a Release with the .dmg attached. Nothing else creates a release, so the tag
+# is the switch.
+on:
+  push:
+    tags:
+      - 'v*'
+  # Available by hand too, for rebuilding a release that failed halfway.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build (e.g. v0.2.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    # macOS-only app — it reads ~/.claude and shells out to `ps` — and a
+    # universal build has to be assembled on a Mac anyway.
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # The release is the one build that has to be right, so it is also the
+      # one build that runs the checks. A tag that does not typecheck or whose
+      # tests fail should not become something people download.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Check the tag matches package.json
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          version="v$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Tag $tag does not match package.json ($version). Bump the version first."
+            exit 1
+          fi
+
+      - name: Build the universal DMG
+        run: npm run dist
+        env:
+          # electron-builder picks these up on its own. They are absent until
+          # an Apple Developer certificate is added to the repo's secrets, and
+          # the build config falls back to ad-hoc signing when they are — see
+          # electron-builder.config.cjs. Adding them is the whole of what it
+          # takes to ship without a Gatekeeper warning; no code changes.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      # Proof the artifact is intact before anyone downloads it. A bundle whose
+      # signature does not validate is the difference between "unidentified
+      # developer, open anyway" and "damaged, move to Trash", and the second one
+      # is indistinguishable from malware to the person looking at it.
+      - name: Verify the signature
+        run: |
+          app="dist/mac-universal/Atrium.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv --verbose=2 "$app" 2>&1 | tee /tmp/sig.txt
+          grep -q 'Identifier=dev.masonchoi.atrium' /tmp/sig.txt || { echo "::error::bundle identifier is wrong"; exit 1; }
+          grep -q 'Sealed Resources' /tmp/sig.txt || { echo "::error::resources are not sealed"; exit 1; }
+          if grep -q 'Signature=adhoc' /tmp/sig.txt; then
+            echo "::notice::Unsigned release — users will see the one-time Gatekeeper prompt."
+          else
+            echo "Notarized build; checking Gatekeeper accepts it."
+            spctl -a -vvv -t exec "$app"
+          fi
+
+      - name: Checksum
+        run: shasum -a 256 dist/*.dmg | tee dist/SHA256SUMS.txt
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: Atrium ${{ inputs.tag || github.ref_name }}
+          draft: true
+          files: |
+            dist/*.dmg
+            dist/SHA256SUMS.txt
+          body: |
+            ## Install
+
+            1. Download the `.dmg` below.
+            2. Open it and drag **Atrium** to Applications.
+            3. Open Atrium.
+
+            On first launch macOS will say it "could not verify Atrium is free
+            of malware". That is because the app is not signed with a paid
+            Apple Developer certificate — not because anything is wrong with
+            it. To open it anyway:
+
+            - **macOS 15 (Sequoia) and later** — go to  System Settings →
+              Privacy & Security, scroll to the bottom, and click **Open Anyway**.
+            - **macOS 14 and earlier** — right-click Atrium in Applications and
+              choose **Open**.
+
+            You only ever have to do this once.
+
+            ## What it needs
+
+            - macOS 12 or later, Apple Silicon or Intel
+            - [Claude Code](https://code.claude.com/docs) installed, with a `~/.claude` directory
+
+            Atrium reads `~/.claude` and never writes to it. It makes no network
+            calls except the usage check, which is opt-in and goes only to
+            Anthropic's own API.

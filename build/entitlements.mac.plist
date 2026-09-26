@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Used only on the signed-and-notarized path. The hardened runtime is what
+    notarization requires, and it blocks four things Electron genuinely needs:
+    V8 compiles JavaScript to executable memory at runtime, and Electron's
+    helper processes are loaded as unsigned-by-us libraries.
+
+    Note what is NOT here: `com.apple.security.app-sandbox`. Atrium reads
+    ~/.claude and shells out to `ps`, neither of which a sandboxed app can do.
+    Sandboxing is a Mac App Store requirement, not a notarization one, so
+    direct distribution can leave it off.
+  -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

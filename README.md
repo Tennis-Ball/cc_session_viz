@@ -1,43 +1,107 @@
+<div align="center">
+
 # Atrium
 
-A purely visual companion for Claude Code sessions. It watches `~/.claude`, never touches it, and draws what your sessions are doing two ways:
+**A visual companion for Claude Code.** It watches `~/.claude`, never touches it, and draws what your sessions are actually doing.
 
-- **Office** — a Monument-Valley-ish isometric office. Every session gets a desk; agents walk to the Library to read, the Workshop to run commands, the Atelier to think, the Watchtower to watch background work, and the Lounge when there is nothing to do. A ring over someone's head means a session is waiting on you.
-- **Canvas** — a black board of terminal cards, each showing a replica of the Claude Code TUI rebuilt from the transcript, with subagents hanging below their parent on copper edges.
+[![Download for macOS](https://img.shields.io/github/v/release/Tennis-Ball/cc_session_viz?label=Download%20for%20macOS&style=for-the-badge&color=d97757)](https://github.com/Tennis-Ball/cc_session_viz/releases/latest)
 
-There is also a **menu bar glance** (session list, context bars, what each one is doing) and a **usage panel** on the canvas, which reads your real limits from the token Claude Code already stores — read-only, never refreshed — and reads your account limits directly.
+[**Download the latest release →**](https://github.com/Tennis-Ball/cc_session_viz/releases/latest)
 
-It never launches, controls or sends input to a session. cmux stays the place work actually happens.
+Universal · Apple Silicon and Intel · macOS 12+
 
-## Running it
+![The office](media/office.jpg)
 
-```sh
-npm install
-npm run dev        # electron-vite dev server
-npm run build      # bundle main / preload / renderer into out/
-npm test           # unit tests (vitest)
-npm run typecheck  # three tsconfig projects: node, web, tests
-npx playwright test  # launches the built app and captures artifacts/shots/
-npm run dist       # a signed-ad-hoc Atrium.app and .dmg in dist/
-node scripts/render-icon.ts       # regenerate resources/icon.icns
-node scripts/render-tray-icon.ts  # regenerate the menu bar template images
+</div>
+
+## Install
+
+1. Download **`Atrium-<version>.dmg`** from [the latest release](https://github.com/Tennis-Ball/cc_session_viz/releases/latest).
+2. Open it and drag **Atrium** into Applications.
+3. Open Atrium.
+
+<details>
+<summary><b>First launch shows a warning. Here is what it is and how to get past it.</b></summary>
+
+<br>
+
+macOS will say it *"could not verify Atrium is free of malware"*.
+
+That is Gatekeeper telling you the app is not signed with a paid Apple Developer certificate ($99/year). It is not a virus scan and it has not found anything — it simply cannot identify who built the app. Every notarization-free macOS app gets this, and as of September 2026 there is no way around it short of buying the certificate.
+
+**To open it anyway — once, then never again:**
+
+- **macOS 15 (Sequoia) and later** — open Atrium, dismiss the dialog, then go to  **System Settings → Privacy & Security**, scroll to the bottom, and click **Open Anyway**.
+- **macOS 14 and earlier** — right-click Atrium in Applications and choose **Open**.
+
+**If it instead says "Atrium is damaged and can't be opened"**, the download was corrupted. Check the file against `SHA256SUMS.txt` on the release page and download it again:
+
+```bash
+shasum -a 256 ~/Downloads/Atrium-*.dmg
 ```
 
-`⌘1` / `⌘2` switch modes, `⌘,` opens Settings. In the office, drag to orbit, scroll to zoom, `[` / `]` swing 45°, `0` resets; hover a figure to see what it is doing, click one to jump to its terminal. `⌥S` swaps between your sessions and the simulation.
+</details>
 
-Settings (theme, pinned lighting, motion, music, what to show, session filters) and the camera angle, desk placements and window state live in a single prefs file under `userData`. **That file is the only thing this app writes anywhere.**
+## What it does
 
-### Data sources
+Atrium reads the same `~/.claude` directory Claude Code already writes to, and shows it two ways.
 
-| `CCV_SOURCE` | what it reads |
-|---|---|
-| `live` (default) | the real `~/.claude` tree |
-| `ambient` | nothing on disk — the generated office only |
-| `sim` | the M0 placeholder source |
+### Office
 
-`CCV_MODE=real\|simulation` pins what the app shows. The two are exclusive: the simulation is generated from nothing and never contains, or borrows from, a real session.
+Every session gets a desk. Its agents walk to whichever part of the campus matches what they are actually running — the Library to read files, the Workshop to run commands, the Atelier to think and plan, the Watchtower to sit with background tasks, the Commons to spawn subagents, the Lounge when there is nothing to do. The paper stack on a desk is how full that session's context is. A ring over someone's head means they are waiting on you.
 
-## Layout
+The point is peripheral vision: you can tell across the room that something needs you, without reading anything.
+
+### Canvas
+
+![The canvas](media/canvas.png)
+
+A board of terminal cards, one per session, each rebuilding the Claude Code TUI from the transcript — the same spinner, the same `● Bash(...)` rows, the same status line. Subagents hang below their parent on copper edges. Two-finger scroll pans, pinch zooms.
+
+### And
+
+- A **menu bar glance** — session list, context bars, what each one is doing — without bringing a window forward.
+- A **usage panel** reading your real limits from the OAuth token Claude Code already stores, with a local estimate as the fallback.
+- **Day/night lighting** that follows your clock, six themes, and optional ambient music.
+- A **simulation** (`⌥S`) that fills the office with invented sessions when you have none running. It is generated from nothing and never contains, or borrows from, anything real.
+
+## Requirements
+
+- macOS 12 or later — Apple Silicon or Intel
+- [Claude Code](https://code.claude.com/docs) installed, with a `~/.claude` directory
+
+## What it does with your data
+
+Atrium is a viewer. That is worth being precise about, because it is pointed at a directory full of your work:
+
+- **It never writes to `~/.claude`.** Every read is read-only. The only file it writes anywhere is its own preferences, under the app's `userData` directory.
+- **It makes no network calls**, with one exception: if you turn on live usage limits, it calls Anthropic's own API and nothing else. Turn it off and the app never opens a socket.
+- **No telemetry, no accounts, no analytics, no crash reporting.**
+- **Your Claude Code credentials are read once per launch**, kept in memory, never written down, never refreshed, and never logged. If reading them fails for any reason the app falls back to a local estimate and carries on.
+- **Open source, MIT.** All of the above is checkable — start at `src/engine/`.
+
+## Building it yourself
+
+Requires [Node.js](https://nodejs.org) 24+ and npm. No Xcode, no Rust.
+
+```bash
+npm install
+npm run dev        # the app, with hot reload
+
+npm run typecheck  # three tsconfig projects: node, web, tests
+npm test           # unit tests
+npm run e2e        # launches the built app and captures artifacts/shots/
+
+npm run dist       # a universal Atrium.dmg in dist/
+npm run dist:fast  # Apple Silicon only, for a quicker local build
+```
+
+Keyboard: `⌘1` / `⌘2` switch views, `⌘,` opens Settings, `⌥S` swaps between your sessions and the simulation. In the office, drag to orbit, scroll to zoom, `[` / `]` swing 45°, `0` resets.
+
+<details>
+<summary><b>Repository layout</b></summary>
+
+<br>
 
 ```
 src/shared/     the contract: World, TranscriptEntry, VisualEvent, protocol, palette
@@ -53,14 +117,47 @@ src/renderer/
   canvas/       React Flow board, terminal cards, the TUI replica
   office/       react-three-fiber scene: facet material, campus, figures
   tray/         the menu bar popover, the same bundle loaded at #tray
-resources/      the menu bar template icon, rendered by scripts/render-tray-icon.ts
+build/          entitlements, used only on the signed path
+resources/      icons, rendered by scripts/render-icon.ts and render-tray-icon.ts
 fixtures/       anonymized real sessions, used by the engine tests
-scripts/        schema-drift.ts (read-only probe), record-fixture.ts, render-tray-icon.ts
+scripts/        schema-drift.ts (read-only probe), record-fixture.ts, render-*-icon.ts
 ```
 
-## The two rules
+**Two rules hold the codebase together:**
 
 1. **`normalize.ts` is the only place that knows the transcript format.** It changes between Claude Code point releases; everything downstream speaks `Signal`. `node scripts/schema-drift.ts` reports anything new.
 2. **One material, one prop kit, one palette.** The office is unlit: faces take their tone from the direction they point. Every object goes through `office/props/kit.ts` so the whole place stays one picture.
 
-The full design — art direction, the nuance matrix of every Claude Code behaviour and how it is drawn, and the milestone plan — lives in `~/.claude/plans/i-want-to-create-humble-stallman.md`.
+</details>
+
+<details>
+<summary><b>Cutting a release</b></summary>
+
+<br>
+
+Releases are built by GitHub Actions on a tag, never by hand:
+
+```bash
+npm version minor        # bumps package.json and tags
+git push --follow-tags
+```
+
+`.github/workflows/release.yml` then typechecks, runs the tests, refuses the tag if it disagrees with `package.json`, builds the universal DMG, verifies the bundle signature is intact, and opens a **draft** release. Publishing the draft is the release switch.
+
+**To ship without the Gatekeeper warning**, add these five repository secrets and change nothing else — `electron-builder.config.cjs` detects them and switches to Developer ID signing with the hardened runtime, entitlements and notarization:
+
+| Secret | Where it comes from |
+|---|---|
+| `CSC_LINK` | your Developer ID Application `.p12`, base64-encoded |
+| `CSC_KEY_PASSWORD` | the password you exported the `.p12` with |
+| `APPLE_ID` | the Apple ID on the developer account |
+| `APPLE_APP_SPECIFIC_PASSWORD` | generated at [appleid.apple.com](https://appleid.apple.com) |
+| `APPLE_TEAM_ID` | the 10-character team ID |
+
+Without them the build ad-hoc signs instead. That is not a formality: an ad-hoc signature seals the bundle and binds its `Info.plist`, which is the difference between the ordinary "unidentified developer" prompt and macOS reporting the app as **damaged**.
+
+</details>
+
+## Licence
+
+MIT © Mason Choi
