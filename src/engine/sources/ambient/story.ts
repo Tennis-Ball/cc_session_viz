@@ -17,6 +17,8 @@ import {
   TOOL_RESULTS,
   WEB_QUERIES,
   WORKFLOWS,
+  MCP_SERVERS,
+  PUBLISH_COMMANDS,
   type Repo,
 } from './corpus';
 
@@ -47,6 +49,15 @@ export interface Beat {
    * approved a minute later rather than the instant you look at it.
    */
   pose?: true;
+  /**
+   * Whose transcript this beat belongs to. Absent means the main agent.
+   *
+   * Without it every signal the simulation produced landed on the main agent,
+   * so a subagent existed as a card and a figure with no transcript at all —
+   * and the canvas drew it as a 440×300 rectangle of nothing. Which is what a
+   * new user saw, since the simulation is what runs when nothing else does.
+   */
+  agent?: string;
 }
 
 /** Carried across the whole session: ids stay unique, the meter stays honest. */
@@ -70,6 +81,8 @@ export interface StoryDecks {
   questions: Deck<string>;
   notes: Deck<string>;
   workflows: Deck<{ name: string; script: string }>;
+  servers: Deck<string>;
+  publishes: Deck<{ command: string; description: string }>;
 }
 
 export interface StoryContext {
@@ -105,6 +118,8 @@ export function newDecks(random: () => number): StoryDecks {
     questions: new Deck(QUESTIONS, random),
     notes: new Deck(PEER_MESSAGES, random),
     workflows: new Deck(WORKFLOWS, random),
+    servers: new Deck(MCP_SERVERS, random),
+    publishes: new Deck(PUBLISH_COMMANDS, random),
   };
 }
 
@@ -113,8 +128,8 @@ export function newDecks(random: () => number): StoryDecks {
 // ---------------------------------------------------------------------------
 
 /** Every gap runs through the session's tempo: that is what separates desks. */
-function beat(ctx: StoryContext, after: number, signals: SignalBody[]): Beat {
-  return { after: Math.round(after * ctx.character.tempo), signals };
+function beat(ctx: StoryContext, after: number, signals: SignalBody[], agent?: string): Beat {
+  return { after: Math.round(after * ctx.character.tempo), signals, ...(agent ? { agent } : {}) };
 }
 
 function held(base: Beat): Beat {
@@ -197,37 +212,73 @@ function quiet(ctx: StoryContext, ms?: number): Beat {
  */
 function toolPair(ctx: StoryContext): readonly [Beat, Beat] {
   const id = nextId(ctx, 'toolu');
-  const use = (after: number, name: string, input: Record<string, unknown>, extra: SignalBody[] = []): Beat =>
-    beat(ctx, after, [{ s: 'toolUse', messageId: id, id, name, input }, ...extra]);
-  const done = (after: number, text: string): Beat =>
-    beat(ctx, after, [{ s: 'toolResult', id, isError: false, text }]);
+  /** How long the call is pending — the time the figure spends at the prop. */
+  const call = (pending: number, name: string, input: Record<string, unknown>, extra: SignalBody[] = []): Beat =>
+    beat(ctx, pending, [{ s: 'toolUse', messageId: id, id, name, input }, ...extra]);
+  /** And the think afterwards, before whatever the agent does next. */
+  const back = (think: number, text: string): Beat =>
+    beat(ctx, think, [{ s: 'toolResult', id, isError: false, text }]);
 
+  /*
+   * The first number is how long the tool is *pending*, and it is the one that
+   * decides what the office looks like.
+   *
+   * Every one of these used to be between half a second and two, whatever the
+   * tool — so a test run and a file read took the same time, and the figure had
+   * gone back to thinking before it could have walked anywhere. Measured over
+   * five minutes, the workshop was never once used. These are the durations the
+   * real tools take: a read is a moment, a suite of tests is most of a minute,
+   * and a web search is somewhere between. The office reads them straight off,
+   * so a session running tests is a figure standing at the copier while they
+   * run, which is both what is happening and the thing worth seeing.
+   *
+   * They were also, for one round, on the wrong beat of the pair. A beat's
+   * duration is the dwell that *follows* its signals, so the long number was
+   * landing on the gap after the result rather than on the call: a test suite
+   * was pending for three seconds and the session then sat doing nothing for
+   * the best part of a minute. Two fifths of all agent-time was thinking at a
+   * desk, and the props it was supposed to be standing at went unused. Hence
+   * the names: whatever is in `call` is what you watch happen.
+   */
   switch (pickFlavour(ctx.character.tools, ctx.random)) {
     case 'bash': {
       const bash = ctx.decks.commands.draw();
-      return [use(2500 + ctx.random() * 7000, 'Bash', { ...bash }), done(700 + ctx.random() * 1600, ctx.decks.results.draw())];
+      const heavy = /test|build|install|bench|lint|tsc|vitest|jest|cargo|forge/.test(String(bash['command'] ?? ''));
+      return [
+        call(heavy ? 14_000 + ctx.random() * 42_000 : 1200 + ctx.random() * 6500, 'Bash', { ...bash }),
+        back(2500 + ctx.random() * 7000, ctx.decks.results.draw()),
+      ];
     }
     case 'read':
-      return [use(1400 + ctx.random() * 2600, 'Read', { file_path: filePath(ctx) }), done(500 + ctx.random() * 1100, 'file contents')];
+      return [call(900 + ctx.random() * 2600, 'Read', { file_path: filePath(ctx) }), back(1400 + ctx.random() * 2600, 'file contents')];
     case 'edit':
-      return [use(2000 + ctx.random() * 4000, 'Edit', { file_path: filePath(ctx) }), done(700 + ctx.random() * 1500, 'Applied 1 edit')];
+      return [call(1600 + ctx.random() * 4000, 'Edit', { file_path: filePath(ctx) }), back(2000 + ctx.random() * 4000, 'Applied 1 edit')];
     case 'grep':
       return [
-        use(1200 + ctx.random() * 2400, 'Grep', { pattern: ctx.decks.queries.draw() }),
-        done(500 + ctx.random() * 1200, '18 matches across 6 files'),
+        call(1100 + ctx.random() * 3400, 'Grep', { pattern: ctx.decks.queries.draw() }),
+        back(1200 + ctx.random() * 2400, '18 matches across 6 files'),
       ];
     case 'web':
       return [
-        use(5000 + ctx.random() * 11_000, 'WebSearch', { query: ctx.decks.web.draw() }),
-        done(900 + ctx.random() * 1800, '6 results'),
+        call(7000 + ctx.random() * 16_000, 'WebSearch', { query: ctx.decks.web.draw() }),
+        back(5000 + ctx.random() * 11_000, '6 results'),
       ];
     case 'skill':
-      return [use(1600 + ctx.random() * 2400, 'Skill', { skill: ctx.decks.skills.draw() }), done(500 + ctx.random() * 900, 'loaded')];
+      return [call(1800 + ctx.random() * 3600, 'Skill', { skill: ctx.decks.skills.draw() }), back(1600 + ctx.random() * 2400, 'loaded')];
+    case 'mcp':
+      return [
+        call(2600 + ctx.random() * 7000, `mcp__${ctx.decks.servers.draw()}`, {}),
+        back(2200 + ctx.random() * 5000, 'ok'),
+      ];
+    case 'publish': {
+      const push = ctx.decks.publishes.draw();
+      return [call(2600 + ctx.random() * 6000, 'Bash', { ...push }), back(3000 + ctx.random() * 6000, 'done')];
+    }
     case 'todo': {
       const items = ctx.decks.todos.draw();
       const cut = 1 + Math.floor(ctx.random() * items.length);
       return [
-        use(1500 + ctx.random() * 2500, 'TodoWrite', { todos: items.length }, [
+        call(1500 + ctx.random() * 2500, 'TodoWrite', { todos: items.length }, [
           {
             s: 'tasks',
             items: items.map((item, index) => ({
@@ -238,7 +289,7 @@ function toolPair(ctx: StoryContext): readonly [Beat, Beat] {
             })),
           },
         ]),
-        done(500 + ctx.random() * 700, 'ok'),
+        back(1500 + ctx.random() * 2500, 'ok'),
       ];
     }
   }
@@ -254,16 +305,23 @@ function* toolRun(ctx: StoryContext): Generator<Beat> {
  * The one thing a turn does beyond calling tools, chosen by character: a
  * delegator fans out most turns, a runner leaves a server running, an architect
  * stops to ask. Most turns roll past all of them and are plainly just work.
+ *
+ * The order matters, because the weights are subtracted in it: whatever is last
+ * only happens on the tail of the roll, and on a busy archetype whose weights
+ * nearly sum to one it hardly happens at all. Messaging a peer used to be last
+ * and was effectively switched off for exactly the sessions — the delegator,
+ * the integrator — that are meant to do it. The two things worth walking across
+ * the office to watch go first.
  */
 function* flourish(ctx: StoryContext): Generator<Beat> {
   const character = ctx.character;
   let roll = ctx.random();
   if ((roll -= character.fanOut) < 0) return yield* fanOut(ctx);
+  if ((roll -= character.chats) < 0) return yield* messagePeer(ctx);
   if ((roll -= character.orchestrates) < 0) return yield* workflowRun(ctx);
   if ((roll -= character.plans) < 0) return yield* planMode(ctx);
   if ((roll -= character.asks) < 0) return yield* askQuestion(ctx);
   if ((roll -= character.watches) < 0) return yield* backgroundWatch(ctx);
-  if ((roll -= character.chats) < 0) return yield* messagePeer(ctx);
 }
 
 export function* turn(ctx: StoryContext): Generator<Beat> {
@@ -271,6 +329,9 @@ export function* turn(ctx: StoryContext): Generator<Beat> {
 
   const steps = spanInt(ctx.character.steps, ctx.random);
   for (let i = 0; i < steps; i++) yield* toolRun(ctx);
+
+  // Rarely, the API says no. Not a character trait: nobody is immune to it.
+  if (ctx.random() < 0.05) yield* hiccup(ctx);
 
   // A full window is not a flourish, it is the next thing that has to happen.
   if (ctx.state.contextUsed / ctx.character.window >= AUTO_COMPACT_PCT / 100) yield* compaction(ctx);
@@ -294,7 +355,18 @@ interface Launched {
   agent: string;
 }
 
-function launch(ctx: StoryContext): { beats: readonly [Beat, Beat]; launched: Launched } {
+/**
+ * One subagent, launched to block its parent or to run behind it.
+ *
+ * Every launch used to report `isAsync` — "Async agent launched successfully",
+ * the shape of a *background* agent, whose parent carries straight on working
+ * and whose Agent call is already finished. That is the uncommon case, and
+ * modelling only it meant no agent in this office ever waited for anybody: the
+ * Commons grew chairs for children who arrived while their parent sat at its
+ * own desk. A blocking launch leaves the parent waiting on its children for as
+ * long as they run, which is what sits it down at the round table with them.
+ */
+function launch(ctx: StoryContext, background: boolean): { beats: readonly [Beat, Beat]; launched: Launched } {
   const task = ctx.decks.tasks.draw();
   const id = nextId(ctx, 'toolu');
   const child = agentId(ctx);
@@ -316,10 +388,10 @@ function launch(ctx: StoryContext): { beats: readonly [Beat, Beat]; launched: La
           s: 'toolResult',
           id,
           isError: false,
-          text: 'Async agent launched successfully.',
+          text: background ? 'Async agent launched successfully.' : 'Agent started.',
           result: {
-            isAsync: true,
-            status: 'async_launched',
+            isAsync: background,
+            status: background ? 'async_launched' : 'launched',
             agentId: child,
             resolvedModel: ctx.character.agentModel,
           },
@@ -335,17 +407,54 @@ function* fanOut(ctx: StoryContext, pose = false): Generator<Beat> {
   // with, so it is always worth looking at: never a single agent.
   const count = Math.max(pose ? 2 : 1, spanInt(ctx.character.fanWidth, ctx.random));
   const launched: Launched[] = [];
+  // Most fan-outs are waited on; the rest are left running in the background
+  // while the parent gets on with something else. See `launch`.
+  const background = ctx.random() < 0.35;
 
   for (let i = 0; i < count; i++) {
-    const one = launch(ctx);
+    const one = launch(ctx, background);
     launched.push(one.launched);
     yield one.beats[0];
     yield one.beats[1];
   }
 
+  /*
+   * The fan actually working, rather than a gap with a number on it.
+   *
+   * Each agent gets the shape of a real subagent transcript — the task it was
+   * given, a think, a couple of calls, a finding — written to its own log. The
+   * beats are interleaved across agents on purpose: they run at the same time,
+   * and a card that fills top to bottom while its sibling sits empty reads as
+   * one agent working and one stuck.
+   */
+  const rounds = 2 + Math.floor(ctx.random() * 2);
+  for (const one of launched) {
+    yield beat(ctx, 300 + ctx.random() * 500, [{ s: 'thinking', messageId: nextId(ctx, 'msg'), text: null }], one.agent);
+  }
+  for (let round = 0; round < rounds; round += 1) {
+    for (const one of launched) {
+      const [use, done] = toolPair(ctx);
+      yield { ...use, after: Math.round(900 + ctx.random() * 2200), agent: one.agent };
+      yield { ...done, after: Math.round(500 + ctx.random() * 1400), agent: one.agent };
+    }
+  }
+  for (const one of launched) {
+    yield beat(
+      ctx,
+      600 + ctx.random() * 1400,
+      [{ s: 'text', messageId: nextId(ctx, 'msg'), text: ctx.decks.summaries.draw() }],
+      one.agent,
+    );
+  }
+
+  // Then, most of the time, the parent and one of them talk about it.
+  if (launched.length > 0 && ctx.random() < 0.7) {
+    yield* confer(ctx, launched[Math.floor(ctx.random() * launched.length)]!);
+  }
+
   // The wait is its own beat so a warm start can be caught here, with the whole
   // fan still out and nothing handed back yet.
-  const working = beat(ctx, 30_000 + ctx.random() * 120_000, []);
+  const working = beat(ctx, 8000 + ctx.random() * 40_000, []);
   yield pose ? held(working) : working;
 
   for (const one of launched) {
@@ -412,8 +521,17 @@ function* askQuestion(ctx: StoryContext, pose = false): Generator<Beat> {
   const id = nextId(ctx, 'toolu');
   const question = ctx.decks.questions.draw();
 
-  // The `after` is how long the halo stays up: this is a person being waited on.
-  const asking = beat(ctx, 45_000 + ctx.random() * 150_000, [
+  /*
+   * How long the halo stays up.
+   *
+   * Shorter than it was, and the reason is arithmetic rather than taste.
+   * Waiting is the one state that *parks* a session: a figure on the pedestal
+   * is not reading, running or walking anywhere, so a long wait removes it from
+   * the office entirely. At three-quarters of a minute, measured across a busy
+   * house, one in seven of everybody was standing on a plinth doing nothing.
+   * Long enough to catch, short enough that the office is still working.
+   */
+  const asking = beat(ctx, 26_000 + ctx.random() * 70_000, [
     {
       s: 'toolUse',
       messageId: id,
@@ -429,8 +547,20 @@ function* askQuestion(ctx: StoryContext, pose = false): Generator<Beat> {
 function* planMode(ctx: StoryContext, pose = false): Generator<Beat> {
   const id = nextId(ctx, 'toolu');
 
-  yield beat(ctx, 8000 + ctx.random() * 14_000, [{ s: 'permissionMode', mode: 'plan' }]);
-  const proposal = beat(ctx, 40_000 + ctx.random() * 140_000, [
+  /*
+   * Longer at the whiteboard, shorter on the plinth.
+   *
+   * These two numbers are the whole of what plan mode looks like, and they were
+   * the wrong way round: ten seconds of planning and up to three minutes of
+   * waiting to be told yes. Planning is the part worth watching — it is the
+   * only thing that uses the atelier — and waiting is the part that takes a
+   * figure out of the office. So the thinking gets the time.
+   */
+  yield beat(ctx, 1500, [{ s: 'permissionMode', mode: 'plan' }]);
+  // And it is spent reading, not staring at the board. See `research`.
+  const digs = 2 + Math.floor(ctx.random() * 3);
+  for (let i = 0; i < digs; i += 1) yield* research(ctx);
+  const proposal = beat(ctx, 9000 + ctx.random() * 24_000, [
     { s: 'toolUse', messageId: id, id, name: 'ExitPlanMode', input: {} },
   ]);
   yield pose ? held(proposal) : proposal;
@@ -438,6 +568,82 @@ function* planMode(ctx: StoryContext, pose = false): Generator<Beat> {
     { s: 'toolResult', id, isError: false, text: 'approved' },
     { s: 'permissionMode', mode: 'auto' },
   ]);
+}
+
+/**
+ * The request that did not go through, and the wait before trying again.
+ *
+ * Rate limits and server errors are part of a working afternoon, and the office
+ * has had a bench for them from the start — the hourglass in the lounge, which
+ * nothing had ever sat on, because the simulation's requests never failed. Rare
+ * on purpose, and long enough when it happens to see a figure sitting it out.
+ */
+function* hiccup(ctx: StoryContext): Generator<Beat> {
+  const refused = nextId(ctx, 'msg');
+  // The dwell after a beat is what it looks like, so the wait belongs here.
+  yield beat(ctx, 12_000 + ctx.random() * 26_000, [
+    {
+      s: 'usage',
+      messageId: refused,
+      model: messageModel(ctx.character),
+      used: ctx.state.contextUsed,
+      output: 0,
+      apiError: true,
+      error: ctx.random() < 0.45 ? 'rate_limit' : 'server_error',
+    },
+  ]);
+
+  // The retry that goes through, which is also what clears the condition.
+  const retry = nextId(ctx, 'msg');
+  yield beat(ctx, 1800 + ctx.random() * 2600, [
+    { s: 'thinking', messageId: retry, text: null },
+    {
+      s: 'usage',
+      messageId: retry,
+      model: messageModel(ctx.character),
+      used: ctx.state.contextUsed,
+      output: 140 + Math.floor(ctx.random() * 600),
+    },
+  ]);
+}
+
+/**
+ * Reading around before proposing something, which is what planning is.
+ *
+ * The plan stretch used to be one empty beat: the session entered plan mode and
+ * sat there for the best part of a minute. The office drew that honestly — a
+ * figure at a whiteboard, not moving — and it was very nearly the only thing
+ * the atelier ever got. These are what fills it. Each one walks the figure off
+ * to the library or the observatory and back to the board, which is both what
+ * the agent is doing and the half of it worth watching; the long pause is now
+ * in front of each call, where the thinking is.
+ */
+function* research(ctx: StoryContext): Generator<Beat> {
+  const id = nextId(ctx, 'toolu');
+  const call = (pending: number, name: string, input: Record<string, unknown>): Beat =>
+    beat(ctx, pending, [{ s: 'toolUse', messageId: id, id, name, input }]);
+  const board = (think: number, text: string): Beat =>
+    beat(ctx, think, [{ s: 'toolResult', id, isError: false, text }]);
+
+  /*
+   * Both halves are generous on purpose. Each of these is a round trip — the
+   * whiteboard, the library, the whiteboard — and a figure that is only away
+   * for two seconds never commits to the walk at all, so the atelier would get
+   * the whole stretch and the research would be invisible.
+   */
+  const roll = ctx.random();
+  if (roll < 0.45) {
+    yield call(5000 + ctx.random() * 4000, 'Read', { file_path: filePath(ctx) });
+    yield board(7000 + ctx.random() * 6000, 'file contents');
+    return;
+  }
+  if (roll < 0.8) {
+    yield call(5000 + ctx.random() * 4500, 'Grep', { pattern: ctx.decks.queries.draw() });
+    yield board(7000 + ctx.random() * 6000, '12 matches across 4 files');
+    return;
+  }
+  yield call(7000 + ctx.random() * 9000, 'WebSearch', { query: ctx.decks.web.draw() });
+  yield board(6500 + ctx.random() * 6000, '6 results');
 }
 
 function* backgroundWatch(ctx: StoryContext, pose = false): Generator<Beat> {
@@ -458,6 +664,48 @@ function* backgroundWatch(ctx: StoryContext, pose = false): Generator<Beat> {
       notification: { taskId, status: 'completed', summary: 'Background command completed (exit code 0)' },
     },
   ]);
+}
+
+/**
+ * A word with one of the agents you sent out, and its answer.
+ *
+ * A fan-out used to be entirely one-way: the parent launched, the children
+ * worked in silence, and a notification came back. That is a fair account of
+ * the data and a poor account of the *place* — the whole reason the subagent
+ * rises beside its parent rather than somewhere else is that the two of them
+ * are working together, and nothing in the office ever showed them doing it.
+ * A message each way is what the office turns into two figures standing
+ * together talking, which is the thing to watch.
+ */
+function* confer(ctx: StoryContext, one: Launched): Generator<Beat> {
+  const down = nextId(ctx, 'toolu');
+  yield beat(ctx, 1200 + ctx.random() * 1800, [
+    {
+      s: 'toolUse',
+      messageId: down,
+      id: down,
+      name: 'SendMessage',
+      input: { to: one.agent, message: ctx.decks.notes.draw() },
+    },
+  ]);
+  yield beat(ctx, 700, [{ s: 'toolResult', id: down, isError: false, text: 'Message queued for delivery' }]);
+
+  const up = nextId(ctx, 'toolu');
+  yield beat(
+    ctx,
+    2000 + ctx.random() * 4000,
+    [
+      {
+        s: 'toolUse',
+        messageId: up,
+        id: up,
+        name: 'SendMessage',
+        input: { to: 'main', message: ctx.decks.summaries.draw() },
+      },
+    ],
+    one.agent,
+  );
+  yield beat(ctx, 700, [{ s: 'toolResult', id: up, isError: false, text: 'Message queued for delivery' }], one.agent);
 }
 
 function* messagePeer(ctx: StoryContext): Generator<Beat> {

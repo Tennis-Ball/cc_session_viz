@@ -1,3 +1,4 @@
+import { spiralShape, spiralVia } from './spiral';
 import { hash32 } from '@shared/format';
 import { rng } from '@shared/rand';
 import type { ZoneId } from '@shared/activity';
@@ -52,6 +53,17 @@ export interface Platform {
    */
   stone: number;
   /**
+   * Which terrace this platform is coloured as if it stood on.
+   *
+   * Its own level, except for a stacked terrace, which takes its host's — the
+   * same rule that gives it its host's stone, and for the same reason: it is an
+   * upper storey of one building rather than a second building that happens to
+   * overlap. Resolved here so that every consumer — the floor, the walkway
+   * landing on it and the architecture standing on it — cannot disagree about
+   * it and leave two colours on one plane.
+   */
+  stoneLevel: number;
+  /**
    * Upper terraces only: the platform this one stands over.
    *
    * A terrace with a host is genuinely stacked — its footprint is inside the
@@ -69,15 +81,25 @@ export interface Connector {
   /** Same level → bridge, otherwise a climb. */
   kind: 'bridge' | 'stairs';
   /**
-   * How that climb is made.
+   * How that climb is made: a straight run of treads, or a turn about a newel.
    *
-   * Every flight in the office being the same straight run of treads is what
-   * makes a campus of thirteen platforms read as a diagram. A spiral turns
-   * about a newel; a lift is an open tower you ride up the inside of. They are
-   * the same walkway to the nav graph — the difference is the shape of it, and
-   * for the lift, the shape of the route through it.
+   * Both are the same walkway to the nav graph — the difference is only the
+   * shape of it. Every flight in the office being the same straight run is what
+   * makes a campus of thirteen platforms read as a diagram.
+   *
+   * Two things have been tried here and withdrawn, and the reason is the same
+   * one both times. A **lift** — an open tower with the route bent into an L —
+   * put its shaft over the *high* end of a climb, which between two platforms
+   * is a point in open air, so its posts hung in the void. A **funicular** had
+   * no such bug and still had to go: a bed, a deck, two rails and a car are all
+   * thin, flat things, and at the size one of these is actually drawn — a gap
+   * four units wide, seen from forty-five degrees up — they stack into a pile
+   * of boards. What makes a flight of stairs legible at that size is the one
+   * thing neither of them had: a run of repeated steps, light and dark
+   * alternating, which the eye reads as a staircase before it reads anything
+   * else. The spiral has it. Nothing else here does.
    */
-  style: 'straight' | 'spiral' | 'lift';
+  style: 'straight' | 'spiral';
   /** Which way it runs: 'x' means it spans the gap along x. */
   axis: 'x' | 'z';
   /** Walkable width, centred on the shared edge span. */
@@ -87,9 +109,15 @@ export interface Connector {
   /**
    * Points the route must pass through between the two ends.
    *
-   * A lift is not crossed in a straight line: you walk in at the bottom, go
-   * straight up, and walk out at the top. Without this the figure would drift
-   * diagonally through the tower's frame.
+   * One thing uses it and one thing should: a spiral. Its treads wind one and
+   * a half times round a newel, and the straight line between its two ends
+   * goes through the post — so every figure that took one walked through the
+   * staircase. This is where the helix is handed to the router.
+   *
+   * A lift used to use it too, to bend its route into an L, and that was the
+   * tell that the lift was wrong rather than that `via` was: a walkway you
+   * cannot cross in something like a straight line is a walkway whose geometry
+   * is not where it says it is.
    */
   via?: [number, number, number][];
 }
@@ -134,7 +162,7 @@ export function buildCampus(
   desks: DeskRequest[],
   assigned: Map<string, DeskCell> = new Map(),
   seed = 0,
-  detail: OfficeDetail = 'composed',
+  detail: OfficeDetail = 'ornate',
 ): Campus {
   const platforms: Platform[] = CAMPUS.map(zonePlatform);
   if (seed !== 0) terrace(platforms, seed);
@@ -183,6 +211,7 @@ export function buildCampus(
       // Replaced by `assignStone` once every platform exists; it needs to see
       // the neighbours before it can pick.
       stone: 0,
+      stoneLevel: 0,
       ...(placement.over ? { over: placement.over } : {}),
     });
   }
@@ -240,12 +269,15 @@ function assignStone(platforms: Platform[], seed: number): void {
     for (let i = 0; i < STONE_COUNT && used.has(pick); i += 1) pick = (pick + 1) % STONE_COUNT;
     chosen.set(platform.id, pick);
     platform.stone = pick;
+    platform.stoneLevel = platform.level;
   }
 
   // Upper storeys, once their hosts are settled.
   for (const platform of platforms) {
     if (!platform.over) continue;
-    platform.stone = byId.get(platform.over)?.stone ?? 0;
+    const host = byId.get(platform.over);
+    platform.stone = host?.stone ?? 0;
+    platform.stoneLevel = host?.level ?? platform.level;
   }
 }
 
@@ -273,6 +305,7 @@ function zonePlatform(zone: ZoneSpec): Platform {
     label: zone.label,
     // See `assignStone`, which fills this in once the whole campus exists.
     stone: 0,
+    stoneLevel: 0,
   };
 }
 
@@ -432,7 +465,6 @@ const STACK_SIZE = 2;
 /** How many raised terraces a world may have, per detail setting. */
 const STACKS: Record<OfficeDetail, [number, number]> = {
   quiet: [0, 1],
-  composed: [1, 2],
   ornate: [2, 3],
 };
 
@@ -475,25 +507,17 @@ function raiseTerraces(platforms: Platform[], seed: number, detail: OfficeDetail
     // just a rug.
     if (level - host.level < STACK_RISE) continue;
 
-    // Pushed into a corner of the host, so the walkable middle — where the
-    // furniture is and where the walkways arrive — stays open and the piers
-    // land on floor nobody needs.
-    const west = random() < 0.5;
-    const north = random() < 0.5;
-    const cell: CellRect = {
-      col: west ? host.cell.col : host.cell.col + host.cell.cols - STACK_SIZE,
-      row: north ? host.cell.row : host.cell.row + host.cell.rows - STACK_SIZE,
-      cols: STACK_SIZE,
-      rows: Math.min(STACK_SIZE, host.cell.rows),
-    };
+    const cell = bestCorner(host, random);
 
     const placed = cellToWorld(cell);
+
     raised.push({
       id: `upper:${host.id}`,
       kind: 'zone',
       cell,
       // Overwritten with the host's, since an upper storey is the same building.
       stone: 0,
+      stoneLevel: 0,
       position: placed.position,
       /**
        * Smaller than the cells it is booked into.
@@ -568,19 +592,29 @@ function stackConnectors(platforms: Platform[]): Connector[] {
     const top: [number, number, number] = alongX ? [topAlong, upperY, cross] : [cross, upperY, topAlong];
     const foot: [number, number, number] = alongX ? [footAlong, hostY, cross] : [cross, hostY, footAlong];
 
-    const style = climbStyle(`${host.id}->${upper.id}`, upper.level - host.level);
-    connectors.push({
-      id: `${host.id}->${upper.id}`,
-      from: host.id,
-      to: upper.id,
-      kind: 'stairs',
-      style,
-      axis: alongX ? 'x' : 'z',
-      width: WALKWAY_WIDTH,
-      a: foot,
-      b: top,
-      ...viaFor(style, foot, top),
-    });
+    /*
+     * Always a straight flight, whatever the drop.
+     *
+     * Every other walkway crosses open air between two platforms and may be
+     * whatever shape it likes. This one runs *under the terrace's own canopy*,
+     * between the piers holding it up, and those are placed later by the
+     * architecture, which has no say in where this went. A straight flight is
+     * narrow, predictable and lands where the piers are not; a helix is three
+     * units across and went straight through a beam.
+     */
+    connectors.push(
+      withVia({
+        id: `${host.id}->${upper.id}`,
+        from: host.id,
+        to: upper.id,
+        kind: 'stairs',
+        style: 'straight',
+        axis: alongX ? 'x' : 'z',
+        width: WALKWAY_WIDTH,
+        a: foot,
+        b: top,
+      }),
+    );
   }
 
   return connectors;
@@ -588,6 +622,49 @@ function stackConnectors(platforms: Platform[]): Connector[] {
 
 function clampTo(value: number, low: number, high: number): number {
   return low > high ? (low + high) / 2 : Math.max(low, Math.min(high, value));
+}
+
+/**
+ * The ground a walkway actually covers, in world coordinates.
+ *
+ * Not the line from `a` to `b`: a spiral occupies a disc around its newel that
+ * reaches well past the width a straight flight would, and anything measuring
+ * walkways by their endpoints — the crossing prune, the architecture planner —
+ * was measuring a helix as if it were a plank.
+ */
+export function walkwaySpan(connector: Connector): {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  minY: number;
+  maxY: number;
+} {
+  const minY = Math.min(connector.a[1], connector.b[1]);
+  const maxY = Math.max(connector.a[1], connector.b[1]);
+  if (connector.style === 'spiral') {
+    const shape = spiralShape(connector);
+    const radius = shape.reach + shape.tread / 2;
+    return {
+      minX: shape.midX - radius,
+      maxX: shape.midX + radius,
+      minZ: shape.midZ - radius,
+      maxZ: shape.midZ + radius,
+      minY,
+      maxY,
+    };
+  }
+  const half = connector.width / 2;
+  const padX = connector.axis === 'x' ? 0 : half;
+  const padZ = connector.axis === 'x' ? half : 0;
+  return {
+    minX: Math.min(connector.a[0], connector.b[0]) - padX,
+    maxX: Math.max(connector.a[0], connector.b[0]) + padX,
+    minZ: Math.min(connector.a[2], connector.b[2]) - padZ,
+    maxZ: Math.max(connector.a[2], connector.b[2]) + padZ,
+    minY,
+    maxY,
+  };
 }
 
 /** The grid rectangle every platform sits inside. */
@@ -653,30 +730,35 @@ function clampLevel(level: number): number {
  *
  * Deterministic from the pair of platforms it joins, so a world keeps its
  * staircases wherever it is reseeded from. Flat crossings are always bridges.
- * A tall climb is the interesting case: that is where a lift earns its keep,
- * because two levels of straight treads is a lot of treads.
+ *
+ * Which style goes where is a question about *pitch*, and getting that the
+ * wrong way round is what made the old lift look wrong wherever it turned up.
+ * Every gap here is one cell across, so the slope is decided entirely by how
+ * many levels the climb is: one level over one cell is about one in three,
+ * and two levels is fifty degrees.
+ *
+ * Both of the shapes left are built for a climb — treads break the mass into
+ * steps either way — so the pitch only decides how often the spiral is worth
+ * it. A spiral earns its place most on the two-level climbs, where a straight
+ * flight is fifty degrees of ramp and a helix turns the same height into a
+ * column.
  */
 function climbStyle(id: string, drop: number): Connector['style'] {
   if (drop === 0) return 'straight';
   const roll = (hash32(id) % 1000) / 1000;
-  if (Math.abs(drop) > 1) return roll < 0.22 ? 'lift' : roll < 0.42 ? 'spiral' : 'straight';
-  return roll < 0.16 ? 'spiral' : 'straight';
+  if (Math.abs(drop) > 1) return roll < 0.45 ? 'spiral' : 'straight';
+  return roll < 0.3 ? 'spiral' : 'straight';
 }
 
-/** A lift is entered at the bottom and left at the top, never crossed. */
-function viaFor(
-  style: Connector['style'],
-  from: [number, number, number],
-  to: [number, number, number],
-): { via?: [number, number, number][] } {
-  if (style !== 'lift') return {};
-  const [lowX, lowY, lowZ] = from[1] <= to[1] ? from : to;
-  const [highX, highY, highZ] = from[1] <= to[1] ? to : from;
-  // The shaft stands over the high end, so the ride is the vertical leg and
-  // the walk in is the horizontal one.
-  const shaft: [number, number, number] = [highX, lowY, highZ];
-  const head: [number, number, number] = [highX, highY, highZ];
-  return { via: from[1] <= to[1] ? [shaft, head] : [head, shaft] };
+/**
+ * A spiral is walked up its own helix; everything else is walked across.
+ *
+ * Applied where connectors are made rather than where they are drawn, so there
+ * is exactly one place that can forget.
+ */
+function withVia(connector: Connector): Connector {
+  if (connector.style !== 'spiral') return connector;
+  return { ...connector, via: spiralVia(connector) };
 }
 
 /** Grid adjacency alone: one clear cell on one axis, overlapping on the other. */
@@ -705,7 +787,74 @@ interface Placement {
 }
 
 /** How many desks may be built on top of something, per detail setting. */
-const DESK_STACKS: Record<OfficeDetail, number> = { quiet: 0, composed: 1, ornate: 3 };
+const DESK_STACKS: Record<OfficeDetail, number> = { quiet: 0, ornate: 2 };
+
+/**
+ * The four corners a raised deck can take on a host.
+ *
+ * A cell shallower than it is wide, so it reads as a gallery along one side
+ * rather than a slab across the whole room. On the usual three-by-two host the
+ * old square deck spanned the full depth, which left no corner that did not
+ * roof most of the furniture: there was no *good* choice to make, only four
+ * equally bad ones. Half as deep covers less than half as much, and a long
+ * narrow balcony is the better building anyway.
+ */
+function corners(host: Platform): CellRect[] {
+  const rows = Math.max(1, Math.min(STACK_SIZE, host.cell.rows) - 1);
+  const out: CellRect[] = [];
+  for (const west of [true, false]) {
+    for (const north of [true, false]) {
+      out.push({
+        col: west ? host.cell.col : host.cell.col + host.cell.cols - STACK_SIZE,
+        row: north ? host.cell.row : host.cell.row + host.cell.rows - rows,
+        cols: STACK_SIZE,
+        rows,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * The corner that leaves the most of the room below visible.
+ *
+ * The seeded choice is kept for the ties, which on a square host is all four of
+ * them — so a world still varies without any of its decks being put somewhere
+ * worse than it had to be.
+ */
+function bestCorner(host: Platform, random: () => number): CellRect {
+  const scored = corners(host).map((cell) => ({ cell, covered: furnitureUnder(host, cell), roll: random() }));
+  scored.sort((a, b) => (Math.abs(a.covered - b.covered) > 0.01 ? a.covered - b.covered : a.roll - b.roll));
+  return scored[0]!.cell;
+}
+
+/**
+ * How much of the room below a raised deck stands over.
+ *
+ * A deck in the corner of a platform still oversails part of the furniture —
+ * the furniture is two thirds of the floor, and a deck worth walking on is a
+ * third of it, so on this grid there is no corner that misses entirely. What
+ * there is, is a *best* corner, and the placement used to pick between the four
+ * by distance to the middle of the campus, which is a question about the town
+ * plan and not about the room it is about to put a ceiling over. That is how
+ * the Commons table and half the Library ended up under a balcony.
+ *
+ * Measured as overlap area with the furniture box, in square units.
+ */
+function furnitureUnder(host: Platform, cell: CellRect): number {
+  const ring = walkableRing(host);
+  const furniture: [number, number] = [host.size[0] - 2 * ring[0], host.size[1] - 2 * ring[1]];
+  const placed = cellToWorld(cell);
+  const deck = stackSize(cell);
+
+  const overlap = (centreA: number, sizeA: number, centreB: number, sizeB: number): number =>
+    Math.max(0, Math.min(centreA + sizeA / 2, centreB + sizeB / 2) - Math.max(centreA - sizeA / 2, centreB - sizeB / 2));
+
+  return (
+    overlap(host.position[0], furniture[0], placed.position[0], deck[0]) *
+    overlap(host.position[1], furniture[1], placed.position[1], deck[1])
+  );
+}
 
 /** A raised platform is built smaller than the cells it is booked into. */
 function stackSize(cell: CellRect): [number, number] {
@@ -749,10 +898,40 @@ function placeDesk(
   if (candidates.length === 0) return null;
   const centre = campusCentre(platforms);
   const seed = hash32(desk.id);
+  const placed = platforms.filter((platform) => platform.kind === 'desk' && !platform.over);
+
+  /**
+   * How many desks are already next door, which counts against a spot.
+   *
+   * Sorting on distance alone fills the ring nearest the middle solid before
+   * starting the next one, and a solid ring of desks is the one thing this
+   * campus cannot survive: the camera is isometric, so a platform and the one
+   * behind and below it land on the same part of the window, and a run of six
+   * of them steps down the screen as a single crowded mass with no sky in it.
+   * That is the honest version of "the desks are on top of each other" — they
+   * are four units apart on the floor and touching in the picture.
+   *
+   * Capped at two, because the point is to prefer a clear spot while there is
+   * one, not to fling the office to the horizon once there is not.
+   */
+  const crowding = (cell: CellRect): number =>
+    Math.min(2, placed.filter((platform) => gridNeighbours(cell, platform.cell)).length);
+
+  /**
+   * What a neighbouring desk costs a spot, in cells of reach toward the middle.
+   *
+   * Small on purpose. It is a preference, not a rule: with six desks and the
+   * whole ring free it moves two thirds of the crowded pairs apart at no cost
+   * at all, and with thirty it widens the campus by about an eighth, which is
+   * the office drawn an eighth smaller. That is the trade, and it is worth it
+   * in that direction — an office with room in it, slightly further away,
+   * reads better than a tight one with its desks in a heap.
+   */
+  const ELBOW = 0.8;
 
   candidates.sort((a, b) => {
-    const da = distanceToCentre(a[0], centre);
-    const db = distanceToCentre(b[0], centre);
+    const da = distanceToCentre(a[0], centre) + crowding(a[0]) * ELBOW;
+    const db = distanceToCentre(b[0], centre) + crowding(b[0]) * ELBOW;
     if (Math.abs(da - db) > 0.01) return da - db;
     // A stable, session-specific tie-break: equally good spots get shared out
     // instead of every session queueing for the same one.
@@ -793,22 +972,20 @@ function rooftopCandidates(platforms: Platform[], carrying: Set<string>): [CellR
     const level = clampLevel(host.level + STACK_RISE);
     if (level - host.level < STACK_RISE) continue;
 
-    // Into a corner, so the piers land on floor nobody needs and the middle —
-    // where the furniture is and where the walkways arrive — stays open.
-    for (const west of [true, false]) {
-      for (const north of [true, false]) {
-        out.push([
-          {
-            col: west ? host.cell.col : host.cell.col + host.cell.cols - STACK_SIZE,
-            row: north ? host.cell.row : host.cell.row + host.cell.rows - STACK_SIZE,
-            cols: STACK_SIZE,
-            rows: Math.min(STACK_SIZE, host.cell.rows),
-          },
-          level,
-          host.id,
-        ]);
-      }
-    }
+    /*
+     * One corner per host, and it is the one that covers the least of the room
+     * underneath.
+     *
+     * All four used to be offered, and the caller then chose between them by
+     * distance to the middle of the campus — which is a question about the town
+     * plan, not about the room it is about to put a ceiling over, and reliably
+     * picked the inward corner: the one directly over the furniture.
+     */
+    const ranked = corners(host)
+      .map((cell) => ({ cell, covered: furnitureUnder(host, cell) }))
+      .sort((a, b) => a.covered - b.covered);
+    const pick = ranked[0];
+    if (pick) out.push([pick.cell, level, host.id]);
   }
 
   return out;
@@ -1018,23 +1195,103 @@ function buildConnectors(platforms: Platform[]): Connector[] {
       const drop = Math.abs(a.level - b.level);
       const tall = drop > 1;
       const style = climbStyle(`${a.id}->${b.id}`, drop);
-      connectors.push({
-        id: `${a.id}->${b.id}`,
-        from: a.id,
-        to: b.id,
-        kind: a.level === b.level ? 'bridge' : 'stairs',
-        style,
-        axis: shared.axis,
-        // A lift is a tower, not a ramp: it wants to be square, not wide.
-        width: style === 'lift' ? Math.min(WALKWAY_WIDTH, span) : Math.min(tall ? WALKWAY_WIDTH * 1.6 : WALKWAY_WIDTH, span),
-        a: from,
-        b: to,
-        ...viaFor(style, from, to),
-      });
+      connectors.push(
+        withVia({
+          id: `${a.id}->${b.id}`,
+          from: a.id,
+          to: b.id,
+          kind: a.level === b.level ? 'bridge' : 'stairs',
+          style,
+          axis: shared.axis,
+          // A tall flight of stairs wants to be generous; a spiral is as wide
+          // as its own helix and takes nothing from the figure that matters.
+          width: Math.min(tall && style === 'straight' ? WALKWAY_WIDTH * 1.6 : WALKWAY_WIDTH, span),
+          a: from,
+          b: to,
+        }),
+      );
     }
   }
 
-  return connectors;
+  return pruneCrossings(connectors, platforms);
+}
+
+/**
+ * Two walkways may not occupy the same air.
+ *
+ * Every adjacent pair of platforms gets a walkway, and nothing stopped two of
+ * them being routed through the *same* gap on different axes — so a campus
+ * regularly drew a full X of stairs, one flight passing straight through the
+ * other at the same height, treads interleaved. It is the loudest kind of
+ * broken: a staircase is a thing people know the shape of.
+ *
+ * Refusing every crossing outright would be wrong, because some of those
+ * walkways are the only way to a room. So: take them in a fixed order and drop
+ * any that lands on one already accepted, then walk the dropped ones and put
+ * back exactly those whose two ends are still in different pieces of the
+ * campus. What survives is a campus with no crossings that it can afford and
+ * no rooms that cannot be reached.
+ */
+function pruneCrossings(connectors: Connector[], platforms: Platform[]): Connector[] {
+  const kept: Connector[] = [];
+  const dropped: Connector[] = [];
+  for (const connector of connectors) {
+    if (kept.some((other) => overlaps(connector, other))) dropped.push(connector);
+    else kept.push(connector);
+  }
+
+  const parent = new Map<string, string>(platforms.map((platform) => [platform.id, platform.id]));
+  const find = (id: string): string => {
+    let root = id;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    while (parent.get(id) !== root) {
+      const next = parent.get(id)!;
+      parent.set(id, root);
+      id = next;
+    }
+    return root;
+  };
+  const join = (x: string, y: string): boolean => {
+    const rx = find(x);
+    const ry = find(y);
+    if (rx === ry) return false;
+    parent.set(rx, ry);
+    return true;
+  };
+
+  for (const connector of kept) join(connector.from, connector.to);
+  for (const connector of dropped) if (join(connector.from, connector.to)) kept.push(connector);
+  return kept;
+}
+
+/** Do two walkways share any floor, at any height either of them occupies? */
+function overlaps(a: Connector, b: Connector): boolean {
+  // A walkway that starts where another one ends is a junction, not a clash.
+  if (a.from === b.from || a.from === b.to || a.to === b.from || a.to === b.to) return false;
+  const boxA = spanOf(a);
+  const boxB = spanOf(b);
+  if (boxA.maxX <= boxB.minX || boxB.maxX <= boxA.minX) return false;
+  if (boxA.maxZ <= boxB.minZ || boxB.maxZ <= boxA.minZ) return false;
+  // Different storeys may pass over each other; that is Monument Valley, not a
+  // fault. `HEADWAY` is what it takes to walk under one.
+  return boxA.maxY > boxB.minY && boxB.maxY > boxA.minY;
+}
+
+/** Enough air over a flight that another may cross above it. */
+const HEADWAY = 1.9;
+
+function spanOf(connector: Connector): { minX: number; maxX: number; minZ: number; maxZ: number; minY: number; maxY: number } {
+  const half = connector.width / 2;
+  const padX = connector.axis === 'x' ? 0 : half;
+  const padZ = connector.axis === 'x' ? half : 0;
+  return {
+    minX: Math.min(connector.a[0], connector.b[0]) - padX,
+    maxX: Math.max(connector.a[0], connector.b[0]) + padX,
+    minZ: Math.min(connector.a[2], connector.b[2]) - padZ,
+    maxZ: Math.max(connector.a[2], connector.b[2]) + padZ,
+    minY: Math.min(connector.a[1], connector.b[1]) - 0.5,
+    maxY: Math.max(connector.a[1], connector.b[1]) + HEADWAY,
+  };
 }
 
 function boundsOfAll(platforms: Platform[]): Campus['bounds'] {

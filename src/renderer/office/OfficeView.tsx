@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Vector3 } from 'three';
 import { ACTIVITY_ZONE, type SlotKind, type ZoneId } from '@shared/activity';
 import { paletteAt } from '@shared/palette';
-import type { AgentView, SessionView, World } from '@shared/model';
+import { HORIZONS, WEATHERS, type Horizon, type Weather } from '@shared/prefs';
+import type { AgentView, Endpoint, SessionView, World } from '@shared/model';
 import { engineClient } from '../engine/client';
 import { usePrefs } from '../store/prefs';
 import { useUi } from '../store/ui';
@@ -12,21 +13,26 @@ import { attachFlickerProbe } from './dev/flickerProbe';
 import { recordDomChurn } from './dev/domChurn';
 import { applyVisualEvent, type Stage } from './anim/choreographer';
 import { advanceOfficeClock, officeNow } from './anim/officeClock';
-import { FigureController, type ZoneResolver } from './anim/figureController';
+import { FigureController, separateFigures, setGroundLift, type ZoneResolver } from './anim/figureController';
 import { FlightPool } from './anim/flights';
+import { Staging } from './anim/staging';
 import { NpcPopulation, npcCountFor } from './anim/npcs';
+import { Conversations, gap, REACH, type Talker } from './anim/conversation';
 import { IsoCamera } from './camera/IsoCamera';
-import { applyTheme, setVoidPlane } from './material/facet';
+import { applyTheme, setSunOffset, setVoidPlane } from './material/facet';
 import { depthTint, scaleForTier } from './figures/geometry';
 import { buildPropFor, propPalette } from './props/registry';
 import { Envelopes } from './scene/Envelopes';
 import { Figures, type FigureInstance } from './scene/Figures';
 import { Labels } from './scene/Labels';
+import { DeskPiles, ZoneWarmth } from './scene/Markers';
 import { FigureCard } from './FigureCard';
 import { Platforms } from './scene/Platforms';
 import { Sky } from './scene/Sky';
 import { Atmosphere } from './scene/Atmosphere';
-import { dayFactorFor, mixHex, resolveTheme, type ResolvedTheme } from './theme/themes';
+import { Distance } from './scene/Distance';
+import { Birds } from './scene/Birds';
+import { dayFactorFor, isFalling, luma, mixHex, resolveTheme, sunOffsetFor, type ResolvedTheme } from './theme/themes';
 import { buildCampus, type Campus, type DeskRequest } from './world/layout';
 import { archBlockers, lowestFloor, planArchitecture, type ArchPlan } from './world/architecture';
 import { NavGraph, type Vec3 } from './world/navGraph';
@@ -76,19 +82,35 @@ export function OfficeView({ active = true }: { active?: boolean }): React.JSX.E
     },
     [select, setMode],
   );
-  const themeId = usePrefs((s) => s.prefs.theme.office);
+  const storedTheme = usePrefs((s) => s.prefs.theme.office);
+  // `?theme=` alongside `?clock=`, `?seed=` and `?weather=`, for the same
+  // reason: a screenshot of Ink & Paper at dusk has to be reproducible without
+  // clicking through Settings, which means taking the front of the screen.
+  const themeId = new URLSearchParams(window.location.search).get('theme') ?? storedTheme;
   const pinnedClock = usePrefs((s) => s.prefs.theme.pinnedClock);
-  const [theme, setTheme] = useState<ResolvedTheme>(() => resolveTheme(themeId, dayFactorFor(new Date())));
+  const weather = useWeather();
+  const horizon = useHorizon();
+  const [theme, setTheme] = useState<ResolvedTheme>(() =>
+    resolveTheme(themeId, dayFactorFor(new Date()), isFalling(new Date())),
+  );
 
   // The clock moves the palette, once a second, never per frame.
   useEffect(() => {
-    const update = (): void => setTheme(resolveTheme(themeId, dayFactorFor(officeClock(pinnedClock))));
+    const update = (): void => {
+      const at = officeClock(pinnedClock);
+      setTheme(resolveTheme(themeId, dayFactorFor(at), isFalling(at)));
+    };
     update();
     const timer = setInterval(update, 1000);
     return () => clearInterval(timer);
   }, [themeId, pinnedClock]);
 
-  useEffect(() => applyTheme(theme), [theme]);
+  useEffect(() => {
+    applyTheme(theme);
+    // The sun rides the clock while the basis rides the camera. Without this
+    // the office is lit identically at six in the morning and eight at night.
+    setSunOffset(sunOffsetFor(theme.dayFactor, theme.falling));
+  }, [theme]);
 
   /**
    * The labels are HTML over a canvas whose palette runs from cream to indigo,
@@ -98,14 +120,37 @@ export function OfficeView({ active = true }: { active?: boolean }): React.JSX.E
    */
   useEffect(() => {
     const root = document.documentElement.style;
-    const night = theme.dayFactor < 0.5;
-    // By day the ink is the platform's own side colour taken most of the way
-    // to black. Using it neat put soft mid-brown letters on a cream floor,
-    // which is legible in the way a watermark is legible.
-    const ink = night ? theme.tones.top : mixHex(theme.platform.side, '#000000', 0.5);
-    root.setProperty('--office-ink', withAlpha(ink, night ? 0.74 : 0.68));
-    root.setProperty('--office-ink-strong', withAlpha(ink, night ? 0.94 : 0.86));
-    root.setProperty('--office-ink-halo', withAlpha(theme.sky[night ? 2 : 0], night ? 0.9 : 0.75));
+    /*
+     * Chosen against what is actually behind the letters, not against the hour.
+     *
+     * This used to flip on `dayFactor < 0.5`, which had two faults at once. It
+     * was a hard switch, so every label in the office changed colour in one
+     * frame somewhere around half past seven. And it was the wrong question:
+     * the labels sit on platform tops, and a platform top is pale in every
+     * theme at every hour — it is the *sky* that goes dark. So the office spent
+     * the whole of dawn putting pale letters on pale stone, and the zone names
+     * disappeared exactly when the campus needed them most.
+     *
+     * Asking the surface how bright it is gives a continuous answer and cannot
+     * drift out of step with a palette someone edits later. The same trick is
+     * what keeps Ink & Paper's clouds off its paper; see `atmosphereTones`.
+     */
+    const floor = theme.platform.top;
+    const dark = luma(floor) > 0.5;
+    const ink = dark ? mixHex(floor, '#000000', 0.82) : mixHex(floor, '#FFFFFF', 0.86);
+    const halo = dark ? mixHex(floor, '#FFFFFF', 0.55) : mixHex(floor, '#000000', 0.62);
+    root.setProperty('--office-ink', withAlpha(ink, 0.72));
+    root.setProperty('--office-ink-strong', withAlpha(ink, 0.92));
+    root.setProperty('--office-ink-halo', withAlpha(halo, 0.8));
+    /*
+     * The rim the glyphs are cut out of.
+     *
+     * A soft glow separates letters from a *plain* background and does nothing
+     * at all against the office, where a name can straddle a pale deck, a dark
+     * rock face and open sky inside one word. Nearly opaque, because the job is
+     * to put a known colour behind every stroke rather than to suggest one.
+     */
+    root.setProperty('--office-ink-rim', withAlpha(halo, 0.94));
   }, [theme]);
 
   // WebGL contexts are lost on sleep/wake, on a GPU driver reset, and when the
@@ -148,6 +193,37 @@ export function OfficeView({ active = true }: { active?: boolean }): React.JSX.E
   hydrateDeskCells(savedCells);
 
   const detail = usePrefs((s) => s.prefs.office.detail);
+  const labelsOn = usePrefs((s) => s.prefs.office.labels);
+
+  /*
+   * Rooms arriving and leaving, shared by everything that draws one.
+   *
+   * It lives here rather than inside `Platforms` because a desk is not only a
+   * platform: it is also a mast, a nameplate and a pool of lamplight, each
+   * drawn by a different component. They all have to come up together or the
+   * flag arrives before the building it flies from.
+   */
+  const staging = useMemo(() => new Staging(), []);
+  /*
+   * What the caretaker you are pointing at is up to.
+   *
+   * A ref rather than state: it is read while the card renders and it must not
+   * cause a render of its own — the office redraws sixty times a second and
+   * re-rendering React for a caption would undo the whole reason the figures
+   * are written straight into instance matrices.
+   */
+  const npcNote = useRef<(id: string) => string | null>(() => null);
+  /**
+   * Who this figure has stopped to talk to, in words, or null.
+   *
+   * Filled in from inside the canvas, where the conversations are, and read by
+   * the card outside it. A ref rather than state because it changes whenever
+   * anybody starts or stops talking, which is several times a minute, and the
+   * card is the only thing that ever asks.
+   */
+  const chatNote = useRef<(id: string) => string | null>(() => null);
+  // Everybody standing on a room that is still coming up rides it up.
+  useEffect(() => setGroundLift((id) => (id ? staging.offsetOf(id) : 0)), [staging]);
 
   const seed = worldSeed(savedSeed);
   const campus = useMemo(() => {
@@ -181,9 +257,56 @@ export function OfficeView({ active = true }: { active?: boolean }): React.JSX.E
   // it and the label that sits just off its edge. Fitting to the platforms
   // rather than one box around everything matters — a box around a ring of
   // terraces is mostly empty air.
+  /*
+   * Double-clicking a desk frames it, and `0` or Escape gives the campus back.
+   *
+   * The office was only ever watchable: you could orbit it and you could pin a
+   * card, but there was no way to *go and look at* one session — and once there
+   * are a dozen desks, wanting to look at one of them is the ordinary reason to
+   * open the app. Framing is the gesture that turns the picture into a tool,
+   * and it costs nothing: the camera already fits itself to a set of points, so
+   * focusing is handing it a smaller set.
+   */
+  const [focus, setFocus] = useState<string | null>(null);
+  useEffect(() => {
+    if (focus && !campus.platforms.some((platform) => platform.id === focus)) setFocus(null);
+  }, [campus, focus]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.metaKey || event.ctrlKey) return;
+      if (event.key === 'Escape' || event.key === '0') setFocus(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  /**
+   * Half the campus footprint, for the scenery to stand outside of.
+   *
+   * Taken off every platform rather than off the framed subset: focusing on one
+   * room must not bring the whole distance in around it.
+   */
+  const horizonFrom = useMemo((): { centre: [number, number]; spread: number } => {
+    /*
+     * Where the campus is and how big it is — both measured, neither assumed.
+     *
+     * This used to return one number: the furthest platform edge *from the
+     * origin*. The campus template does not centre the campus on the origin,
+     * so that number was the distance from a corner, and the ring of landmarks
+     * drawn at that radius about the origin fell almost entirely outside the
+     * window. `bounds` has said where the campus actually is all along.
+     */
+    const { min, max } = campus.bounds;
+    return {
+      centre: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2],
+      spread: Math.max(max[0] - min[0], max[1] - min[1]) / 2,
+    };
+  }, [campus]);
+
   const frame = useMemo<Point[]>(() => {
     const points: Point[] = [];
-    for (const platform of campus.platforms) {
+    const framed = focus ? campus.platforms.filter((platform) => platform.id === focus) : campus.platforms;
+    for (const platform of framed) {
       const y = levelY(platform.level);
       // A tower or a canopy stands well above the props, and cropping the top
       // off the one thing that gives the campus a skyline defeats the point of
@@ -206,7 +329,7 @@ export function OfficeView({ active = true }: { active?: boolean }): React.JSX.E
       );
     }
     return points;
-  }, [campus, architecture]);
+  }, [campus, architecture, focus]);
 
   return (
     <div className="office-view">
@@ -240,13 +363,52 @@ export function OfficeView({ active = true }: { active?: boolean }): React.JSX.E
         onCreated={onCreated}
       >
         <Ticker active={drawing} />
-        <Sky theme={theme} />
-        <Atmosphere theme={theme} seed={seed} />
-        <Platforms campus={campus} theme={theme} architecture={architecture} />
-        <Labels campus={campus} world={world} />
+        {/*
+          * The sky flattens a little under cloud; the *clouds* do the rest.
+          *
+          * This used to be 0.7 and 1.0, which desaturated the whole gradient
+          * and put the sun out — and since the cloud layer was dissolving
+          * itself at the time, that wash was the entire visible difference
+          * between clear and overcast. It was the haze.
+          *
+          * And a cloudy day gets none of it now. Flattening the sky is what
+          * happens under a lid; a sky full of bright cumulus is still a sunny
+          * sky, and taking the sun out of it was most of why cloudy looked
+          * like a worse version of clear rather than a different day.
+          */}
+        <Sky theme={theme} overcast={weather === 'rain' ? 0.5 : 0} />
+        <Atmosphere theme={theme} seed={seed} weather={weather} />
+        {/*
+          * The distance, in front of the sky and behind the office.
+          *
+          * Geometry, not a painted layer — see `scenery.ts`. It stands well
+          * out past the campus and is deliberately absent from the camera's
+          * fitting frame above, so however far it sprawls the office keeps the
+          * size it had.
+          */}
+        <Distance
+          theme={theme}
+          seed={seed}
+          kind={horizon}
+          floorY={lowestFloor(campus)}
+          centre={horizonFrom.centre}
+          spread={horizonFrom.spread}
+        />
+        <Platforms
+          campus={campus}
+          theme={theme}
+          architecture={architecture}
+          staging={staging}
+          onPick={(point) => setFocus((current) => (current ? null : nearestPlatform(campus, point)))}
+        />
+        <ZoneWarmth campus={campus} world={world} accent={theme.accent} />
+        <DeskPiles campus={campus} world={world} staging={staging} accent={theme.accent} />
+        {labelsOn && <Labels campus={campus} world={world} staging={staging} />}
         <Population
           world={world}
           campus={campus}
+          npcNote={npcNote}
+          chatNote={chatNote}
           theme={theme}
           architecture={architecture}
           seed={seed}
@@ -262,7 +424,9 @@ export function OfficeView({ active = true }: { active?: boolean }): React.JSX.E
           {...(world.agents[subject] && world.sessions[world.agents[subject]!.slotId]
             ? { session: world.sessions[world.agents[subject]!.slotId] }
             : {})}
-          caretaker={!world.agents[subject]}
+          npc={!world.agents[subject]}
+          {...(world.agents[subject] ? {} : { doing: npcNote.current(subject) ?? undefined })}
+          {...(chatNote.current(subject) ? { talkingTo: chatNote.current(subject)! } : {})}
           pinned={pinned === subject}
           onOpen={() => openInCanvas(subject)}
           onClose={() => {
@@ -325,6 +489,27 @@ function worldSeed(saved: number): number {
   return rolledSeed;
 }
 
+/**
+ * The weather, with `?weather=` able to override it.
+ *
+ * The same affordance `clock` and `seed` already have, and for the same reason:
+ * a screenshot of a rainstorm has to be reproducible, and the alternative is a
+ * test that clicks through Settings — which means taking the keyboard and the
+ * front of the screen, the two things these runs must never do.
+ */
+function useWeather(): Weather {
+  const stored = usePrefs((s) => s.prefs.office.weather);
+  const asked = new URLSearchParams(window.location.search).get('weather');
+  return WEATHERS.includes(asked as Weather) ? (asked as Weather) : stored;
+}
+
+/** `?horizon=` alongside the rest; see `useWeather`. */
+function useHorizon(): Horizon {
+  const stored = usePrefs((s) => s.prefs.office.horizon);
+  const asked = new URLSearchParams(window.location.search).get('horizon');
+  return HORIZONS.includes(asked as Horizon) ? (asked as Horizon) : stored;
+}
+
 function hydrateDeskCells(saved: Record<string, [number, number]>): void {
   for (const [id, cell] of Object.entries(saved)) {
     if (!deskCells.has(id)) deskCells.set(id, cell);
@@ -355,12 +540,51 @@ function shortLabel(title: string): string {
  * regenerating itself at random while you are looking at it. Nameplates read
  * the live title directly instead, so a rename is a rename.
  */
+/**
+ * Which desk a click landed on or nearest to.
+ *
+ * Nearest rather than strictly inside, because the thing someone is aiming at
+ * is small: a click that lands an inch off a pod's edge on the walkway plainly
+ * means that desk.
+ *
+ * Every platform, not only the desks. Framing was written for the pods, on the
+ * reasoning that zooming to the Library would be zooming to scenery — which
+ * was true when a zone was a floor with two props on it, and stopped being
+ * true when zones started carrying the architecture. Half of what there is to
+ * look at in this office is on a room you could not get close to, and a
+ * double-click that does nothing on four fifths of the campus reads as a
+ * broken control rather than a deliberate one.
+ *
+ * The radius scales with the platform, because a zone is three times the size
+ * of a pod and a fixed six units is generous on one and miserly on the other.
+ */
+function nearestPlatform(campus: Campus, point: [number, number, number]): string | null {
+  let best: string | null = null;
+  let bestScore = Infinity;
+  for (const platform of campus.platforms) {
+    const dx = point[0] - platform.position[0];
+    const dz = point[2] - platform.position[1];
+    // Distance outside the footprint, so a big room does not win a click that
+    // landed on the small one standing next to it.
+    const outside = Math.hypot(
+      Math.max(0, Math.abs(dx) - platform.size[0] / 2),
+      Math.max(0, Math.abs(dz) - platform.size[1] / 2),
+    );
+    if (outside < bestScore) {
+      bestScore = outside;
+      best = platform.id;
+    }
+  }
+  // Well outside whatever was hit, and well short of the next room along.
+  return bestScore <= 3.5 ? best : null;
+}
+
 /** Counted for the probe: see `rebuilds` there for why. */
 export const REBUILDS = { campus: 0, architecture: 0, geometry: 0 };
 
 function deskSignature(world: World): string {
   return Object.values(world.sessions)
-    .map((session) => `${session.groupId ?? session.id}:${session.colorIndex}`)
+    .map((session) => `${session.id}:${session.colorIndex}`)
     .sort()
     .join('|');
 }
@@ -369,7 +593,7 @@ function deskRequests(world: World): DeskRequest[] {
   return Object.values(world.sessions)
     .sort((a, b) => a.startedAt - b.startedAt)
     .map((session) => ({
-      id: session.groupId ?? session.id,
+      id: session.id,
       label: shortLabel(session.title),
       // Kept only as the first thing shown; `Labels` reads the live title.
       colorIndex: session.colorIndex,
@@ -387,6 +611,8 @@ function Population({
   architecture,
   seed,
   subject,
+  npcNote,
+  chatNote,
   onHover,
   onPin,
 }: {
@@ -396,11 +622,15 @@ function Population({
   architecture: ArchPlan;
   seed: number;
   subject: string | null;
+  /** Filled in here, read by the card outside the canvas. */
+  npcNote: MutableRefObject<(id: string) => string | null>;
+  chatNote: MutableRefObject<(id: string) => string | null>;
   onHover: (id: string | null) => void;
   onPin: (id: string | null) => void;
 }): React.JSX.Element {
   const controllers = useRef(new Map<string, FigureController>());
   const npcsOn = usePrefs((s) => s.prefs.office.npcs);
+  const raining = useWeather() === 'rain';
   const [, force] = useState(0);
   const [hovered, setHovered] = useState<string | null>(null);
   const camera = useThree((s) => s.camera);
@@ -470,7 +700,7 @@ function Population({
           const world = worldRef.current;
           const agent = world.agents[agentId];
           const session = agent ? world.sessions[agent.slotId] : undefined;
-          const ownerId = session?.groupId ?? session?.id;
+          const ownerId = session?.id;
           const platform = campus.platforms.find((p) => p.id === `desk:${ownerId}`);
           if (!platform) return null;
           return { platformId: platform.id, position: platformCentre(platform.position, platform.level) };
@@ -522,10 +752,58 @@ function Population({
     [campus, flights],
   );
 
+  /**
+   * Pairs the world has just said something passed between, on their way to
+   * meeting about it. See `Conversations.summon`.
+   *
+   * A message is an event, and a conversation is a state that takes seconds to
+   * set up — one of them has to walk over. This is the gap between the two: a
+   * handful of pairs with a deadline, checked once a frame, cleared when they
+   * are standing together and talking or when they have had long enough.
+   */
+  const meetings = useRef(new Map<string, Meeting>());
+
   useEffect(
-    () => engineClient.onVisualEvent((event) => applyVisualEvent(event, stage, officeNow())),
+    () =>
+      engineClient.onVisualEvent((event) => {
+        const now = officeNow();
+        applyVisualEvent(event, stage, now);
+        if (event.t !== 'message') return;
+        const a = figureFor(event.link.from, worldRef.current, controllers.current);
+        const b = figureFor(event.link.to, worldRef.current, controllers.current);
+        // Both ends have to be somebody in the room. A message from a session
+        // that has ended, or to one you are not running, is post — the envelope
+        // already says that, and nobody can hold a conversation with it.
+        if (!a || !b || a === b) return;
+        /*
+         * Whoever sent it is the host and stays put; the other one walks over.
+         *
+         * Somebody has to be still or the two of them spend the exchange
+         * swapping places, and the sender is the one that is already where the
+         * thing happened — at the mailroom counter, for a message to another
+         * session, which is exactly where two of them meeting ought to be.
+         */
+        meetings.current.set(a < b ? `${a}|${b}` : `${b}|${a}`, { host: a, guest: b, by: now + MEET_TIMEOUT_MS, sent: false });
+      }),
     [stage],
   );
+
+  // The rest of the office. Seeded off the world, so it is always staffed the
+  // same way, and rebuilt with the campus like everyone else.
+  const npcs = useMemo(
+    () => new NpcPopulation(seed, npcsOn ? npcCountFor(campus.platforms.length) : 0),
+    [seed, npcsOn, campus.platforms.length],
+  );
+
+  /*
+   * Who is standing about talking to whom.
+   *
+   * Seeded off the world like everything else, and cleared with the campus:
+   * a conversation is about two particular people standing in one particular
+   * place, and neither survives the floor plan being rebuilt underneath them.
+   */
+  const chatter = useMemo(() => new Conversations(seed), [seed]);
+  useEffect(() => () => chatter.clear(), [chatter, campus]);
 
   // A read-only probe for the e2e run, which asserts that nobody is standing
   // in mid-air. Opt-in by query string, so it is absent in normal use.
@@ -539,6 +817,19 @@ function Population({
       heat: () => flicker.heat(),
       /** What the HTML over the canvas did over the next N animation frames. */
       churn: (frames: number) => recordDomChurn(frames),
+      /** Who is standing about talking to whom, for the conversation check. */
+      chats: () =>
+        [...controllers.current.values(), ...npcs.controllers()]
+          .filter((c) => chatter.talking(c.id))
+          .map((c) => ({
+            id: c.id,
+            with: chatter.partner(c.id),
+            facing: c.pose().heading,
+            // Whether a message caused it, or the office simply put two people
+            // who had nothing on in the same part of the lounge.
+            reported: chatter.reported(c.id),
+            note: chatNote.current(c.id),
+          })),
       figures: () =>
         [...controllers.current.values()].map((c) => ({
           id: c.id,
@@ -556,7 +847,8 @@ function Population({
         })),
       platforms: () =>
         campus.platforms.map((p) => ({ id: p.id, position: p.position, size: p.size, level: p.level })),
-      connectors: () => campus.connectors.map((c) => ({ id: c.id, a: c.a, b: c.b, kind: c.kind })),
+      connectors: () =>
+        campus.connectors.map((c) => ({ id: c.id, a: c.a, b: c.b, kind: c.kind, style: c.style, from: c.from, to: c.to })),
       /**
        * How many times the expensive, *visible* things have been rebuilt.
        *
@@ -567,9 +859,46 @@ function Population({
        * see that from outside, so it is counted from inside.
        */
       rebuilds: () => ({ ...REBUILDS }),
-      /** Screen position of a figure, so a test can put the pointer on it. */
+      /**
+       * Everybody the office draws, where their bodies actually are.
+       *
+       * The *drawn* position, which is the routed one plus however far the
+       * figure has had to step aside, and the radius that body takes up. The
+       * only honest way to ask whether two figures overlap is to ask about the
+       * two things that are on the screen.
+       */
+      bodies: () =>
+        [...controllers.current.values(), ...npcs.controllers()].map((c) => ({
+          id: c.id,
+          at: c.pose().position,
+          // The route's own answer, without the step aside, so a test can tell
+          // a pass that did not part them from a lean that had not arrived yet.
+          routed: [...c.position] as [number, number, number],
+          radius: c.bodyRadius,
+          phase: c.phase,
+          on: c.currentZone,
+          seated: c.pose().seated > 0.5,
+        })),
+      /** What every agent says it is doing, and where it actually is. */
+      work: () =>
+        [...controllers.current.values()].map((c) => ({
+          id: c.id,
+          doing: c.doing,
+          want: c.wantedZone,
+          at: c.currentZone,
+          phase: c.phase,
+        })),
+      /**
+       * Screen position of a figure, so a test can put the pointer on it.
+       *
+       * Caretakers too. They are figures, they can be hovered, and they turn up
+       * in half of the conversations — a probe that only knew about agents
+       * answered null for one of the two people in every chat the office drew.
+       */
       screenOf: (agentId: string) => {
-        const controller = controllers.current.get(agentId);
+        const controller =
+          controllers.current.get(agentId) ??
+          npcs.controllers().find((candidate) => candidate.id === agentId);
         if (!controller) return null;
         const pose = controller.pose();
         // Mid-body, scaled: a fixed offset misses the head on a big figure and
@@ -583,14 +912,8 @@ function Population({
       },
     };
     return () => flicker.dispose();
-  }, [campus, gl]);
+  }, [campus, gl, npcs, chatter]);
 
-  // Caretakers. Seeded off the world, so the same office is always staffed the
-  // same way, and rebuilt with the campus like everyone else.
-  const npcs = useMemo(
-    () => new NpcPopulation(seed, npcsOn ? npcCountFor(campus.platforms.length) : 0),
-    [seed, npcsOn, campus.platforms.length],
-  );
 
   // The floor plan changed: put everybody back on a platform that exists, and
   // let them re-claim a seat in the new pool.
@@ -598,8 +921,25 @@ function Population({
     const now = officeNow();
     for (const controller of controllers.current.values()) controller.rehome(resolver, now);
     npcs.settle(resolver, now);
+    // The card asks the crowd what somebody is doing; a conversation outranks
+    // the errand they were on, because it is what they are visibly doing.
+    npcNote.current = (id) => (chatter.talking(id) ? 'Stopped to talk to somebody' : npcs.describe(id));
+    /*
+     * Named only when the world said so.
+     *
+     * "Talking to Explore" is a claim about what your machine is doing and has
+     * to be true, so it is reserved for a conversation a message actually
+     * caused. Two figures who simply ran into each other in the lounge get the
+     * truth about that too, which is that they are chatting.
+     */
+    chatNote.current = (id) => {
+      if (!chatter.talking(id)) return null;
+      const other = chatter.partner(id);
+      if (!chatter.reported(id) || !other) return 'Chatting';
+      return `Talking to ${nameOf(other, worldRef.current)}`;
+    };
     return () => npcs.clear((id) => slots.release(id));
-  }, [resolver, npcs, slots]);
+  }, [resolver, npcs, slots, npcNote, chatNote, chatter]);
 
   // Sync controllers with the world: spawn, retire, and push activity through.
   useEffect(() => {
@@ -654,14 +994,24 @@ function Population({
         highlight: id === subject ? 1 : 0,
       });
     }
-    // Caretakers wear the stone, not a session palette: nothing about them
-    // should invite you to work out which session they are.
+    /*
+     * They wear the stone, not a session palette: nothing about them should
+     * invite you to work out which session they are. The shape already says
+     * they are not one, so the colour is free to be quiet.
+     *
+     * Not *one* stone, though. A crowd in a single colour reads as a set of
+     * copies, so each takes a slightly different mix of the two — the same
+     * rock, cut on a different day.
+     */
+    let n = 0;
     for (const controller of npcs.controllers()) {
+      const grain = ((n += 1) % 5) / 4;
       out.push({
         controller,
-        colorBottom: theme.platform.side,
-        colorTop: mix(theme.tones.top, theme.platform.side, 0.35),
+        colorBottom: mix(theme.platform.side, theme.tones.top, 0.1 + grain * 0.22),
+        colorTop: mix(theme.tones.top, theme.platform.side, 0.2 + grain * 0.3),
         translucent: false,
+        carryKind: 'cup',
         highlight: controller.id === subject ? 1 : 0,
       });
     }
@@ -671,13 +1021,31 @@ function Population({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [world, controllers.current.size, npcs, theme, subject]);
 
+  /**
+   * Everyone on the campus, for anything that has to react to them.
+   *
+   * A function rather than a list: it is read once a frame by the birds, and
+   * building an array of positions on every world patch — which is ten times a
+   * second — to serve a consumer that only wants the current one would be the
+   * board-clock mistake again.
+   */
+  const crowd = useCallback(() => {
+    const out: { at: [number, number, number]; npc: boolean }[] = [];
+    for (const controller of controllers.current.values()) {
+      if (controller.phase === 'gone') continue;
+      out.push({ at: controller.pose().position, npc: false });
+    }
+    for (const controller of npcs.controllers()) out.push({ at: controller.pose().position, npc: true });
+    return out;
+  }, [npcs]);
+
   useFrame((_state, delta) => {
     // Clamp first, then advance the clock by exactly what the figures are told
     // has passed, so the two can never disagree.
     const step = Math.min(delta, 0.1);
     advanceOfficeClock(step);
     const now = officeNow();
-    npcs.update(step, now);
+    npcs.update(step, now, (id) => chatter.talking(id));
     for (const [id, controller] of controllers.current) {
       controller.update(step, now);
       if (controller.phase === 'gone') {
@@ -686,12 +1054,41 @@ function Population({
         if (subject === id) onHover(null);
       }
     }
+    // Last, and over everybody at once: agents and caretakers walk the same
+    // floors and were happily standing inside each other.
+    separateFigures([...controllers.current.values(), ...npcs.controllers()]);
+
+    /*
+     * Then work out who has stopped to talk to whom.
+     *
+     * After the separation pass, so a pair are already standing a body's width
+     * apart by the time they turn to face each other — run the other way round
+     * and they spend the first second of every conversation nose to nose.
+     *
+     * Caretakers are always free. An agent joins in only while it is idle,
+     * which is the office's own word for a session between turns: somebody
+     * with work in front of them standing about chatting would be the office
+     * saying something untrue about your machine.
+     */
+    const talkers: Talker[] = [];
+    for (const controller of controllers.current.values()) {
+      if (controller.phase === 'gone') continue;
+      talkers.push({ controller, idle: controller.currentZone === 'lounge' });
+    }
+    for (const controller of npcs.controllers()) talkers.push({ controller, idle: true });
+    chatter.update(talkers, step, now);
+    runMeetings(meetings.current, controllers.current, chatter, now);
   });
 
   return (
     <>
       <Figures instances={instances} interaction={interaction} />
       <Envelopes pool={flights} />
+      {/*
+       * Rendered here rather than beside the architecture because what makes
+       * them worth having is that they notice people, and the people are here.
+       */}
+      <Birds campus={campus} plan={architecture} seed={seed} theme={theme} grounded={raining} positions={crowd} />
     </>
   );
 }
@@ -836,3 +1233,111 @@ function mix(a: string, b: string, t: number): string {
   return `#${((1 << 24) | (channel(ar, br) << 16) | (channel(ag, bg) << 8) | channel(ab, bb)).toString(16).slice(1)}`;
 }
 
+
+/**
+ * How long a pair are given to find each other before the office gives up.
+ *
+ * A message is worth walking across the campus for; it is not worth walking
+ * across the campus for a minute and arriving to talk about something that
+ * happened a minute ago.
+ */
+const MEET_TIMEOUT_MS = 45_000;
+
+/** And how long they are kept standing together once they have met. */
+const MEET_HOLD_MS = 11_000;
+
+interface Meeting {
+  /** Stays where it is. */
+  host: string;
+  /** Walks over. */
+  guest: string;
+  by: number;
+  sent: boolean;
+}
+
+/** Which figure stands for a message endpoint, if any does. */
+function figureFor(
+  endpoint: Endpoint,
+  world: World,
+  controllers: Map<string, FigureController>,
+): string | null {
+  if (endpoint.kind === 'agent') return controllers.has(endpoint.agentId) ? endpoint.agentId : null;
+  if (endpoint.kind === 'session') {
+    for (const agent of Object.values(world.agents)) {
+      if (agent.role === 'main' && agent.slotId === endpoint.slotId && controllers.has(agent.id)) return agent.id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Walk the pairs that have something to say to each other together, and start
+ * them talking once they are.
+ *
+ * Both ends are pinned, not just the one that walks. The first version held
+ * only the guest and sent it to where the host was standing at the moment the
+ * message arrived — and the host, which has its own work and its own tally
+ * pulling it toward its own zone, had usually left by the time anybody got
+ * there. What that drew was a figure crossing the office to stand on an empty
+ * square, which is worse than drawing nothing.
+ */
+function runMeetings(
+  meetings: Map<string, Meeting>,
+  controllers: Map<string, FigureController>,
+  chatter: Conversations,
+  now: number,
+): void {
+  for (const [key, meeting] of meetings) {
+    const host = controllers.get(meeting.host);
+    const guest = controllers.get(meeting.guest);
+    if (!host || !guest || now > meeting.by) {
+      meetings.delete(key);
+      continue;
+    }
+    if (chatter.partner(meeting.host) === meeting.guest) {
+      meetings.delete(key);
+      continue;
+    }
+
+    if (gap(host, guest) <= REACH && host.phase === 'standing' && guest.phase === 'standing') {
+      host.meetAt(host.platform ?? '', host.pose().position, now, MEET_HOLD_MS);
+      guest.meetAt(guest.platform ?? '', guest.pose().position, now, MEET_HOLD_MS);
+      chatter.summon(meeting.host, meeting.guest, now);
+      meetings.delete(key);
+      continue;
+    }
+
+    /*
+     * Sent once, and only once the host has come to rest.
+     *
+     * Pinning a figure mid-stride leaves it standing halfway up a flight of
+     * stairs, and re-routing a walking guest every frame is the glitch
+     * `setActivity` already learned the hard way.
+     */
+    if (meeting.sent) continue;
+    if (host.phase !== 'standing' || !host.platform) continue;
+    const at = host.pose().position;
+    host.meetAt(host.platform, at, now, MEET_TIMEOUT_MS + MEET_HOLD_MS);
+    guest.meetAt(host.platform, [at[0] + 1.2, at[1], at[2] + 1.2], now, MEET_TIMEOUT_MS + MEET_HOLD_MS);
+    meeting.sent = true;
+  }
+
+  // And let anybody the conversation has finished with get back to work.
+  for (const [id, controller] of controllers) {
+    if (controller.held && !chatter.talking(id) && !pendingIn(meetings, id)) controller.releaseHold();
+  }
+}
+
+function pendingIn(meetings: Map<string, Meeting>, id: string): boolean {
+  for (const meeting of meetings.values()) if (meeting.host === id || meeting.guest === id) return true;
+  return false;
+}
+
+/** What to call somebody on a card: their session's name, or their role. */
+function nameOf(agentId: string, world: World): string {
+  const agent = world.agents[agentId];
+  if (!agent) return 'someone who works here';
+  const session = world.sessions[agent.slotId];
+  if (agent.role === 'main') return session?.title ?? 'another session';
+  return agent.agentType ?? agent.role;
+}

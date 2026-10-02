@@ -260,3 +260,72 @@ describe('LiveSource over recorded sessions', () => {
     expect(store.snapshot().health.unknownSignals).toBe(0);
   });
 });
+
+/**
+ * The two settings that decide which sessions exist.
+ *
+ * Both shipped as controls in the settings sheet that were wired to nothing:
+ * SDK runs were filtered by a hardcoded condition and the grace period was a
+ * module constant, so moving either did exactly nothing and there was no test
+ * that would have noticed. These run against an in-memory registry rather than
+ * a recording, because what is being asserted is the filtering, not the parser.
+ */
+describe('LiveSource options', () => {
+  const ROOT = '/fake/.claude';
+
+  function registry(pid: number, entrypoint: string, kind: string): string {
+    return JSON.stringify({
+      pid,
+      sessionId: `session-${pid}`,
+      cwd: '/tmp/work',
+      startedAt: 1_000,
+      procStart: 'fake',
+      version: '2.1.0',
+      kind,
+      entrypoint,
+      status: 'idle',
+      name: `s${pid}`,
+      nameSource: 'derived',
+    });
+  }
+
+  async function open(options: { hideSdkSessions: boolean; endedGraceMs: number }) {
+    const overlay = new Map<string, string>([
+      [`${ROOT}/sessions/100.json`, registry(100, 'cli', 'interactive')],
+      [`${ROOT}/sessions/200.json`, registry(200, 'sdk-cli', 'interactive')],
+    ]);
+    const store = new WorldStore();
+    const clock = new FakeClock(10_000);
+    const source = new LiveSource(store, {
+      claudeDir: ROOT,
+      fs: new FixtureFs(ROOT, overlay),
+      proc: new FixtureProc(new Map([[100, 'fake'], [200, 'fake']])),
+      clock,
+    });
+    source.setOptions(options);
+    await source.start();
+    return { store, source, overlay, clock };
+  }
+
+  it('hides SDK runs, and shows them when asked to', async () => {
+    const hidden = await open({ hideSdkSessions: true, endedGraceMs: 60_000 });
+    expect(Object.values(hidden.store.snapshot().sessions).map((s) => s.pid)).toEqual([100]);
+    hidden.source.stop();
+
+    const shown = await open({ hideSdkSessions: false, endedGraceMs: 60_000 });
+    expect(Object.values(shown.store.snapshot().sessions).map((s) => s.pid).sort()).toEqual([100, 200]);
+    shown.source.stop();
+  });
+
+  it('retires an SDK desk at once when the setting is turned back on', async () => {
+    const { store, source } = await open({ hideSdkSessions: false, endedGraceMs: 10 * 60_000 });
+    expect(Object.keys(store.snapshot().sessions)).toHaveLength(2);
+
+    // Not left to time out through the grace period: it has not ended, it is
+    // being hidden, and a desk that lingers makes the switch look broken.
+    source.setOptions({ hideSdkSessions: true, endedGraceMs: 10 * 60_000 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(Object.values(store.snapshot().sessions).map((s) => s.pid)).toEqual([100]);
+    source.stop();
+  });
+});

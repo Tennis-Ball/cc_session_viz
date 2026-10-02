@@ -28,7 +28,7 @@ import type { OfficeDetail } from '@shared/prefs';
  */
 
 const THEME = resolveTheme('monument', 1);
-const DETAILS: OfficeDetail[] = ['quiet', 'composed', 'ornate'];
+const DETAILS: OfficeDetail[] = ['quiet', 'ornate'];
 const SEEDS = [1, 3, 4, 7, 9, 12, 14, 17, 20, 23];
 
 /** A desk per session, enough of them to force stacking and long walkways. */
@@ -285,9 +285,15 @@ describe('coplanar surfaces', () => {
         for (const platform of campus.platforms) {
           faces.push(...upwardFaces(platformGeometry(platform, THEME), `platform ${platform.id}`));
         }
-        const stoneOf = new Map(campus.platforms.map((platform) => [platform.id, platform.stone]));
+        // Both halves of the stone, exactly as `Platforms` passes them: the
+        // variant *and* the terrace it is coloured as if it stood on. Passing
+        // only the variant is what this test caught when the terrace bias
+        // landed, and it was right to — a landing a shade off the floor it
+        // lands on is the flashing, whatever produced it.
+        const stoneOf = new Map(campus.platforms.map((p) => [p.id, [p.stone, p.stoneLevel] as const]));
         for (const connector of campus.connectors) {
-          const geometry = connectorGeometry(connector, THEME, stoneOf.get(connector.from) ?? 0);
+          const [stone, level] = stoneOf.get(connector.from) ?? [0, 0];
+          const geometry = connectorGeometry(connector, THEME, stone, level);
           faces.push(...upwardFaces(geometry, `${connector.style ?? connector.kind} ${connector.id}`));
         }
         const built = campusArchGeometry(campus, plan, THEME);

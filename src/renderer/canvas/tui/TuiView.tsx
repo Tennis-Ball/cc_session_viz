@@ -17,10 +17,22 @@ export function TuiView({
   cardId,
   cols,
   maxLines,
+  waitingFor,
 }: {
   cardId: string;
   cols: number;
   maxLines: number;
+  /**
+   * What this card is for, shown until its first line arrives.
+   *
+   * A subagent is a card the moment it is spawned and its transcript does not
+   * exist until it writes one, which for a card 440×300 meant a rectangle of
+   * pure black with an ellipsis in the corner — on a board where two of them
+   * sat under a session that was plainly working. An empty terminal reads as
+   * broken; an agent that has not said anything yet reads as an agent that has
+   * not said anything yet, and the difference is one line of text.
+   */
+  waitingFor?: string;
 }): React.JSX.Element {
   const entries = useTranscripts((s) => s.byCard[cardId]?.entries) ?? EMPTY;
 
@@ -39,7 +51,7 @@ export function TuiView({
     return (
       <div className="tui">
         <div className="tui__line">
-          <span className="dim">…</span>
+          <span className="dim">{waitingFor ? `✶ ${waitingFor}…` : '…'}</span>
         </div>
       </div>
     );

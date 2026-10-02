@@ -20,7 +20,15 @@ import type { Platform } from './layout';
 const CELL = 0.4;
 /** Below this is floor decoration; above it is headroom. */
 const FLOOR_CLEARANCE = 0.08;
-const HEAD_CLEARANCE = 1.5;
+/**
+ * Exported because the architecture has to build *above* it.
+ *
+ * A canopy whose cloth hangs to knee height across the rim is a wall, and the
+ * router is right to say so — but finding that out by having the gesture
+ * thrown away means a world that was supposed to have one simply does not.
+ * Far better for the thing that hangs to know how low it may hang.
+ */
+export const HEAD_CLEARANCE = 1.5;
 /** How far a figure's body reaches from its centre. */
 const BODY_RADIUS = 0.42;
 

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { FakeClock } from '@engine/ports/clock';
 import { AmbientSource } from '@engine/sources/ambient';
 import { WorldStore } from '@engine/state/worldStore';
+import { ACTIVITY_ZONE, type Activity } from '@shared/activity';
 import {
   AGENT_TASKS,
   ASSISTANT_LINES,
@@ -53,6 +54,31 @@ function run(seed: number, ms: number): { store: WorldStore; source: AmbientSour
     log.mockRestore();
   }
   return { store, source };
+}
+
+/** Every activity anybody is seen doing over `ms` of world time, sampled. */
+function activities(seed: number, ms: number): Set<Activity> {
+  const { store, clock, source } = office(seed);
+  const seen = new Set<Activity>();
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.useFakeTimers();
+  try {
+    source.start();
+    source.setActive(true);
+    for (let elapsed = 0; elapsed < ms; elapsed += TICK_MS) {
+      clock.advance(TICK_MS);
+      vi.advanceTimersByTime(TICK_MS);
+      if (elapsed % 2000 !== 0) continue;
+      for (const agent of Object.values(store.snapshot().agents)) {
+        if (agent.status === 'running') seen.add(agent.activity);
+      }
+    }
+  } finally {
+    vi.useRealTimers();
+    log.mockRestore();
+    source.stop();
+  }
+  return seen;
 }
 
 /**
@@ -203,6 +229,70 @@ describe('the office opens already at work', () => {
     }
   });
 
+  it('shows agents talking to their subagents and to other sessions', () => {
+    /*
+     * The two things the office has the most to say about and you are least
+     * likely to catch by chance. A fan-out puts a second figure beside the
+     * first and a message walks two of them to the mailroom to talk, and for a
+     * long time the simulation produced so few of either that neither piece of
+     * choreography was ever on screen. Counted over a long enough run that an
+     * unlucky seed cannot pass it by accident.
+     */
+    const kinds = new Map<string, number>();
+    const perSeed: number[] = [];
+    for (const seed of [20260919, 4242, 77, 31337, 909]) {
+      const { store } = run(seed, 50 * 60_000);
+      const world = store.snapshot();
+      for (const link of world.links) kinds.set(link.kind, (kinds.get(link.kind) ?? 0) + 1);
+      perSeed.push(Object.values(world.agents).filter((agent) => agent.role !== 'main').length);
+    }
+
+    /*
+     * Counted over five afternoons, and only in total.
+     *
+     * What is left on screen at the end of a run is the agents still working
+     * plus the few most recently finished, and a quiet afternoon of two
+     * sessions may genuinely not fan out at all — so a per-seed floor would be
+     * asserting luck. Five of them together guard the rate, which is the thing
+     * that actually went wrong: for a long time neither this nor a message was
+     * ever on screen.
+     */
+    expect(
+      perSeed.reduce((a, b) => a + b, 0),
+      'no subagents anywhere',
+    ).toBeGreaterThan(6);
+    // An agent and one it sent out, talking about the job.
+    expect(kinds.get('coordinator') ?? 0, 'nobody briefed a subagent').toBeGreaterThan(0);
+    expect(kinds.get('agentToMain') ?? 0, 'no subagent reported back').toBeGreaterThan(0);
+    // And two sessions talking to each other.
+    expect(kinds.get('crossSession') ?? 0, 'no session messaged another').toBeGreaterThan(0);
+  });
+
+  it('uses every room it builds', () => {
+    /*
+     * The one measurement that says the office is a place and not a set.
+     *
+     * Four of its rooms were furnished and never visited, and the layout was
+     * not the reason. Plan mode, a fan-out still out, a running workflow and a
+     * lit lantern are all long stretches that the engine answered for with
+     * "thinking", so a figure stood at its desk through every one of them: over
+     * four minutes of a ten-session house the atelier was reached once, and the
+     * commons, war room and watchtower not at all. Nothing asserted here is
+     * rare enough to miss across three afternoons, so a room that stops being
+     * reached is a regression in what the engine derives, not an unlucky seed.
+     *
+     * `offline` is the exception. It is what a session looks like once its
+     * process is gone, and the simulation retires those rather than draw them.
+     */
+    const seen = new Set<Activity>();
+    for (const seed of [20260919, 4242, 77]) for (const activity of activities(seed, 40 * 60_000)) seen.add(activity);
+
+    const missing = (Object.keys(ACTIVITY_ZONE) as Activity[]).filter(
+      (activity) => activity !== 'offline' && !seen.has(activity),
+    );
+    expect(missing, 'rooms nobody went to').toEqual([]);
+  });
+
   it('sometimes needs the user, and sometimes has a workflow or a watch going', () => {
     let attention = 0;
     let workflows = 0;
@@ -280,14 +370,20 @@ describe('the corpus is wide enough to watch', () => {
   });
 
   it('never repeats a prompt at the same desk in a sitting', () => {
-    const { store, source } = run(31_337, 45 * 60_000);
     let checked = 0;
 
-    for (const session of Object.values(store.snapshot().sessions)) {
+    // Swept, because how many turns one desk gets through in an afternoon is
+    // the session's own business: a seed can leave every one of them on three.
+    const sessions = [31_337, 20260919, 909].flatMap((seed) => {
+      const { store, source } = run(seed, 45 * 60_000);
+      return Object.values(store.snapshot().sessions).map((session) => ({ session, source }));
+    });
+
+    for (const { session, source } of sessions) {
       const prompts = (source.logFor(session.id)?.all() ?? [])
         .filter((entry) => entry.k === 'user')
         .map((entry) => (entry.k === 'user' ? entry.text : ''));
-      if (prompts.length < 4) continue;
+      if (prompts.length < 3) continue;
       checked += 1;
       // The deck deals without replacement, so a repeat before the list is
       // exhausted would mean the picker regressed to a plain random draw.

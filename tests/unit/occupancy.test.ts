@@ -22,6 +22,7 @@ function blockedPlatform(): { platform: Platform; grid: Occupancy } {
     cell: { col: 0, row: 0, cols: 3, rows: 3 },
     position: [6, 6],
     level: 0,
+    stoneLevel: 0,
     stone: 0,
     size: [12, 12],
     label: 'Test',

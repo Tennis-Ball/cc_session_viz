@@ -44,8 +44,35 @@ export interface CanvasLayout {
   edges: PlacedEdge[];
 }
 
+/**
+ * How much a session wants looking at. Higher sorts earlier.
+ *
+ * The board used to be in the order the sessions happened to start, which is
+ * no order at all once there are more than about six of them: every card is
+ * the same size and the same shape, so a wall of them has no shape and nothing
+ * tells you where to begin. Reading order is the cheapest structure a board can
+ * have, and the only ranking worth using is the one that matches why the app is
+ * open — the session that needs you, then the ones that are working, then
+ * whatever moved most recently.
+ */
+function priority(session: SessionView): number {
+  if (session.phase === 'attention') return 4;
+  if (session.phase === 'working') return 3;
+  if (session.unread) return 2;
+  if (session.phase === 'ended') return 0;
+  return 1;
+}
+
 export function layoutCanvas(world: World): CanvasLayout {
-  const sessions = Object.values(world.sessions).sort((a, b) => a.startedAt - b.startedAt);
+  const sessions = Object.values(world.sessions).sort((a, b) => {
+    const rank = priority(b) - priority(a);
+    if (rank !== 0) return rank;
+    // Within a band, most recently active first, and `startedAt` only as a
+    // tiebreak — two idle sessions with no activity at all should still land in
+    // a stable order rather than swapping places on every patch.
+    if (b.lastActivityAt !== a.lastActivityAt) return b.lastActivityAt - a.lastActivityAt;
+    return a.startedAt - b.startedAt;
+  });
   const agentsBySession = new Map<string, AgentView[]>();
   for (const agent of Object.values(world.agents)) {
     if (agent.role === 'main') continue;

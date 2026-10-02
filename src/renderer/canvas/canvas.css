@@ -563,18 +563,73 @@
   pointer-events: none;
 }
 
-.react-flow__controls button {
-  background: rgba(40, 40, 42, 0.9);
-  border-bottom: 1px solid var(--border);
-  color: var(--text);
-  fill: currentColor;
+/*
+ * React Flow's chrome, brought into the app's own language.
+ *
+ * The defaults are a stack of square white-on-dark buttons and a minimap whose
+ * mask is within a shade of the board behind it — three visual languages on a
+ * view that is otherwise a careful reproduction of a terminal. Both now sit in
+ * the same corner, rounded and frosted like every other panel.
+ */
+.react-flow__controls {
+  display: flex;
+  gap: 2px;
+  margin: 0 14px 14px 0;
+  padding: 3px;
+  border-radius: 10px;
+  box-shadow: 0 6px 22px rgb(0 0 0 / 0.35);
+  background: rgb(22 23 28 / 0.82);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgb(255 255 255 / 0.07);
+  /* Above the minimap, which shares the corner. */
+  transform: translateY(-152px);
 }
 
-.react-flow__controls button:hover {
-  background: rgba(60, 60, 62, 0.95);
+.react-flow__controls-button {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #b9b6c4;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.react-flow__controls-button:hover {
+  background: rgb(255 255 255 / 0.08);
+  color: #f2f0f6;
+}
+
+.react-flow__controls-button svg {
+  fill: currentColor;
+  max-width: 12px;
+  max-height: 12px;
+}
+
+/*
+ * No divider between the buttons.
+ *
+ * React Flow rules `.horizontal .react-flow__controls-button { border-right }`,
+ * which out-specifies our `border: none` two classes to one — so zoom-in and
+ * zoom-out each carried a grey hairline down their right edge and fit-view,
+ * being `:last-child`, did not. Three buttons in a row, one of which looked
+ * like a different control. The selector has to be at least as specific as
+ * theirs to say nothing at all.
+ */
+.react-flow__controls.horizontal .react-flow__controls-button,
+.react-flow__controls.horizontal .react-flow__controls-button:last-child {
+  border: none;
 }
 
 .react-flow__minimap {
-  background: rgba(40, 40, 42, 0.85);
+  margin: 0 14px 14px 0;
   border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 6px 22px rgb(0 0 0 / 0.35);
+  background: rgb(18 19 23 / 0.9);
+  border: 1px solid rgb(255 255 255 / 0.07);
+}
+
+[data-motion='reduced'] .react-flow__controls-button {
+  transition: none;
 }

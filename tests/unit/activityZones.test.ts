@@ -2,31 +2,43 @@ import { describe, expect, it } from 'vitest';
 import { ACTIVITY_ZONE, ACTIVITY_LABEL, type Activity, type ZoneId } from '@shared/activity';
 
 /**
- * A representative hour of traffic.
+ * A representative afternoon, in parts per thousand of agent-time.
  *
- * These are counts measured from a simulated hour built on the real tool mix —
- * Bash-heavy, one thinking block per turn, occasional fan-outs — not numbers
- * chosen to make a point. The shape is what matters: thinking dwarfs
- * everything else, because every single turn starts with one.
+ * Sampled from three hours of the simulation — which is built on the real tool
+ * mix, Bash-heavy with a thinking block opening every turn — rather than chosen
+ * to make a point. The shape is what matters, and two things about it drive the
+ * whole campus: thinking is far and away the largest single number, because
+ * every turn starts with one; and the long waits are the next largest, because
+ * an agent sitting on a test suite, a fan-out, a workflow or a background task
+ * is doing that for minutes at a time, not for the instant the call is made.
+ *
+ * The numbers this replaces were written when those waits all read as thinking,
+ * so they credited four rooms with traffic that was not actually going there.
+ * Kept in sync by hand, deliberately: it is a record of what the layout was
+ * designed against, and `simulation.test.ts` is what checks the present.
  */
 const HOUR: Partial<Record<Activity, number>> = {
-  thinking: 135,
-  idle: 63,
-  reading: 22,
-  awaiting: 21,
-  searching: 19,
-  browsing: 16,
-  testing: 12,
-  running: 8,
-  editing: 6,
-  delegating: 5,
-  messaging: 4,
-  watching: 4,
-  planning: 3,
-  tasking: 3,
-  compacting: 2,
-  publishing: 2,
-  orchestrating: 1,
+  thinking: 293,
+  idle: 130,
+  testing: 113,
+  responding: 77,
+  watching: 74,
+  delegating: 61,
+  browsing: 44,
+  awaiting: 33,
+  reading: 29,
+  searching: 29,
+  orchestrating: 27,
+  editing: 16,
+  planning: 15,
+  tooling: 12,
+  running: 11,
+  publishing: 9,
+  learning: 6,
+  compacting: 5,
+  messaging: 5,
+  tasking: 5,
+  stalled: 4,
 };
 
 function occupancy(): Map<ZoneId, number> {

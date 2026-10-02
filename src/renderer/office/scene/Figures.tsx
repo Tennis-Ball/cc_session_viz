@@ -3,8 +3,10 @@ import { useFrame } from '@react-three/fiber';
 import {
   BoxGeometry,
   CanvasTexture,
+  CapsuleGeometry,
   CircleGeometry,
   Color,
+  CylinderGeometry,
   DoubleSide,
   InstancedBufferAttribute,
   InstancedMesh,
@@ -14,7 +16,7 @@ import {
   TorusGeometry,
   type BufferGeometry,
 } from 'three';
-import type { AgentRole } from '@shared/model';
+import type { FigureShape } from '../figures/geometry';
 import { createFacetMaterial } from '../material/facet';
 import { figureGeometry } from '../figures/geometry';
 import { prepareGeometry } from '../props/kit';
@@ -37,6 +39,11 @@ export interface FigureInstance {
   colorTop: string;
   translucent: boolean;
   /**
+   * What a held thing looks like. The context stack is a sheaf of paper; what
+   * somebody brings back from the coffee machine is not.
+   */
+  carryKind?: 'papers' | 'cup';
+  /**
    * 0–1. A figure the pointer is on, or one that has been clicked. It grows a
    * little rather than changing colour: in a palette this close-toned, a tint
    * is easy to miss and easy to mistake for a state the office already uses.
@@ -57,7 +64,7 @@ export function Figures({
   interaction?: FigureInteraction;
 }): React.JSX.Element {
   const byRole = useMemo(() => {
-    const groups = new Map<AgentRole, FigureInstance[]>();
+    const groups = new Map<FigureShape, FigureInstance[]>();
     for (const instance of instances) {
       const role = instance.controller.role;
       const list = groups.get(role) ?? [];
@@ -70,8 +77,9 @@ export function Figures({
   return (
     <>
       {[...byRole.entries()].map(([role, group]) => (
-        <RoleBatch key={role} role={role} instances={group} {...(interaction ? { interaction } : {})} />
+        <RoleBatch key={role} role={role} instances={group} />
       ))}
+      {interaction && <HitProxies instances={instances} interaction={interaction} />}
       <Shadows instances={instances} />
       <Carried instances={instances} />
       <Halos instances={instances} />
@@ -79,15 +87,7 @@ export function Figures({
   );
 }
 
-function RoleBatch({
-  role,
-  instances,
-  interaction,
-}: {
-  role: AgentRole;
-  instances: FigureInstance[];
-  interaction?: FigureInteraction;
-}): React.JSX.Element {
+function RoleBatch({ role, instances }: { role: FigureShape; instances: FigureInstance[] }): React.JSX.Element {
   const mesh = useRef<InstancedMesh>(null);
   const geometry = useMemo(() => figureGeometry(role), [role]);
   const material = useMemo(() => createFacetMaterial({ instancedGradient: true }), []);
@@ -128,6 +128,93 @@ function RoleBatch({
     colors.top.needsUpdate = true;
   });
 
+  return <instancedMesh ref={mesh} args={[geometry, material, CAPACITY]} frustumCulled={false} />;
+}
+
+/**
+ * What the pointer actually hits.
+ *
+ * The figures used to carry their own pointer handlers, one batch per role,
+ * which made the hitbox the model — and the model is a cone thirty centimetres
+ * across with a ball on top, drawn at a zoom where the whole campus fits in a
+ * window. Hitting it meant hitting a shape a few pixels wide with a hole
+ * between the shoulders and the head, and only if it was one of the roles that
+ * happened to be under the cursor. Half the clicks aimed at somebody landed on
+ * the floor behind them.
+ *
+ * So the pointer gets a shape of its own: one capsule per figure, enclosing the
+ * whole silhouette with a little to spare, invisible but still raycast. One
+ * mesh for the entire population rather than one per role, which also means a
+ * single index → id map and no chance of two batches disagreeing about who is
+ * under the cursor.
+ *
+ * `colorWrite` off rather than `visible` off: an invisible object is skipped by
+ * the raycaster, which would defeat the whole thing.
+ */
+export const HIT_RADIUS = 0.42;
+export const HIT_HEIGHT = 1.15;
+/**
+ * How far below the floor the capsule starts.
+ *
+ * Not every body sits exactly on it — an Explore agent is an octahedron, and
+ * its bottom point dips a couple of centimetres under. Two centimetres of
+ * unclickable toe is not a bug anybody would file, but a hitbox that is
+ * *asserted* to contain the model has to actually contain it, or the assertion
+ * is the thing that rots.
+ */
+export const HIT_DROP = 0.06;
+
+function HitProxies({
+  instances,
+  interaction,
+}: {
+  instances: FigureInstance[];
+  interaction: FigureInteraction;
+}): React.JSX.Element {
+  const mesh = useRef<InstancedMesh>(null);
+  const geometry = useMemo<BufferGeometry>(
+    () => new CapsuleGeometry(HIT_RADIUS, HIT_HEIGHT - HIT_RADIUS * 2, 4, 8).translate(0, HIT_HEIGHT / 2 - HIT_DROP, 0),
+    [],
+  );
+  const material = useMemo(
+    () => new MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false }),
+    [],
+  );
+
+  useFrame(() => {
+    const instanced = mesh.current;
+    if (!instanced) return;
+    const count = Math.min(instances.length, CAPACITY);
+    instanced.count = count;
+    for (let i = 0; i < count; i++) {
+      const pose = instances[i]!.controller.pose();
+      // Position and scale only. The capsule is a hitbox, so it does not want
+      // the lean, the squash or the turn — all of which would make the target
+      // move about under the cursor while the figure is being read.
+      const scale = Math.max(0.0001, pose.scale);
+      _object.position.set(pose.position[0], pose.position[1] + pose.seated * pose.seatHeight, pose.position[2]);
+      _object.rotation.set(0, 0, 0);
+      _object.scale.setScalar(scale);
+      _object.updateMatrix();
+      instanced.setMatrixAt(i, _object.matrix);
+    }
+    instanced.instanceMatrix.needsUpdate = true;
+    /*
+     * Thrown away every frame, because everybody moved.
+     *
+     * `InstancedMesh.raycast` tests a cached bounding sphere before it looks at
+     * any instance, and computes that sphere exactly once — from wherever the
+     * instances happened to be standing the first time anything raycast it.
+     * Figures then walk out of it and stop being clickable, silently, with the
+     * hitboxes still drawn in the right places. (The visible batches never hit
+     * this: their first raycast happens while most of their ninety-six slots
+     * are still at the origin, which yields a sphere big enough to cover the
+     * campus by accident.) Clearing it costs one pass over a hundred matrices,
+     * and only on the frames somebody is pointing at the office.
+     */
+    instanced.boundingSphere = null;
+  });
+
   // Instance index → who that is. The order is whatever `instances` is in, and
   // it changes as the population does, so it is read at event time.
   const idAt = (index: number | undefined): string | null =>
@@ -138,29 +225,22 @@ function RoleBatch({
       ref={mesh}
       args={[geometry, material, CAPACITY]}
       frustumCulled={false}
-      onPointerMove={
-        interaction
-          ? (event) => {
-              event.stopPropagation();
-              interaction.onHover(idAt(event.instanceId));
-            }
-          : undefined
-      }
-      onPointerOut={interaction ? () => interaction.onHover(null) : undefined}
-      onClick={
-        interaction
-          ? (event) => {
-              // A drag that happens to end on a figure is a camera move, not a
-              // click on that figure.
-              if (event.delta > 4) return;
-              const id = idAt(event.instanceId);
-              if (id) {
-                event.stopPropagation();
-                interaction.onSelect(id);
-              }
-            }
-          : undefined
-      }
+      renderOrder={-1}
+      onPointerMove={(event) => {
+        event.stopPropagation();
+        interaction.onHover(idAt(event.instanceId));
+      }}
+      onPointerOut={() => interaction.onHover(null)}
+      onClick={(event) => {
+        // A drag that happens to end on a figure is a camera move, not a click
+        // on that figure.
+        if (event.delta > 4) return;
+        const id = idAt(event.instanceId);
+        if (id) {
+          event.stopPropagation();
+          interaction.onSelect(id);
+        }
+      }}
     />
   );
 }
@@ -237,12 +317,26 @@ function Shadows({ instances }: { instances: FigureInstance[] }): React.JSX.Elem
     for (let i = 0; i < count; i++) {
       const pose = instances[i]!.controller.pose();
       const controller = instances[i]!.controller;
-      // The shadow stays on the ground even when a beat lifts the figure; it
-      // just shrinks, the way a contact shadow does.
-      const lift = pose.position[1] - controller.position[1];
-      _object.position.set(pose.position[0], controller.position[1] + 0.02, pose.position[2]);
+      /*
+       * The shadow stays on the ground even when a beat lifts the figure; it
+       * just shrinks, the way a contact shadow does.
+       *
+       * "The ground" has to mean *where the floor is now*, not where the
+       * layout put it. A room arriving is drawn a long way down and rises into
+       * place, and a pose carries that offset folded into its height — so this
+       * difference, which is supposed to be a hop of a few centimetres, came
+       * out as −24, which left the shadow hanging at the destination and blew
+       * it up to forty times its size. A dark circle marking the spot a
+       * platform was about to appear in, several seconds before it did.
+       */
+      const ground = controller.groundOffset;
+      const hop = pose.position[1] - controller.position[1] - ground;
+      _object.position.set(pose.position[0], controller.position[1] + ground + 0.02, pose.position[2]);
       _object.rotation.set(0, 0, 0);
-      _object.scale.setScalar(Math.max(0.0001, pose.scale * (1 - Math.min(0.35, lift * 1.6))));
+      // Clamped both ways: a contact shadow shrinks as its owner leaves the
+      // floor and there is no reading of it that makes it grow.
+      const shrink = Math.min(0.35, Math.max(0, hop * 1.6));
+      _object.scale.setScalar(Math.max(0.0001, pose.scale * (1 - shrink)));
       _object.updateMatrix();
       instancedMesh.setMatrixAt(i, _object.matrix);
     }
@@ -260,11 +354,32 @@ function Shadows({ instances }: { instances: FigureInstance[] }): React.JSX.Elem
  * difference between "the number went down" and "something was filed away".
  */
 function Carried({ instances }: { instances: FigureInstance[] }): React.JSX.Element {
+  return (
+    <>
+      <CarriedKind kind="papers" instances={instances} />
+      <CarriedKind kind="cup" instances={instances} />
+    </>
+  );
+}
+
+function CarriedKind({
+  kind,
+  instances,
+}: {
+  kind: 'papers' | 'cup';
+  instances: FigureInstance[];
+}): React.JSX.Element {
   const mesh = useRef<InstancedMesh>(null);
   const geometry = useMemo(() => {
-    const slab = new BoxGeometry(0.32, 0.22, 0.24);
-    return prepareGeometry(slab, [0.3, 1]);
-  }, []);
+    // Small enough to read as held rather than hauled, and different enough in
+    // silhouette that a cup is never mistaken for the context stack going to
+    // the Archive — which is a thing the office means something by.
+    const shape =
+      kind === 'papers'
+        ? new BoxGeometry(0.32, 0.22, 0.24)
+        : new CylinderGeometry(0.1, 0.085, 0.17, 10).translate(0, 0.085, 0);
+    return prepareGeometry(shape, [0.3, 1]);
+  }, [kind]);
   const material = useMemo(() => createFacetMaterial({ instancedGradient: true }), []);
   const colors = useMemo(
     () => ({
@@ -285,6 +400,7 @@ function Carried({ instances }: { instances: FigureInstance[] }): React.JSX.Elem
 
     let count = 0;
     for (const instance of instances) {
+      if ((instance.carryKind ?? 'papers') !== kind) continue;
       const pose = instance.controller.pose();
       if (pose.carry <= 0.01 || count >= CAPACITY) continue;
 

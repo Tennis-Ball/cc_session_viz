@@ -23,7 +23,10 @@ const WATCH_DEBOUNCE_MS = 60;
 const COLD_WINDOW_MS = 6 * 60 * 60 * 1000;
 const MAIN_TAIL_BYTES = 16 * 1024 * 1024;
 const AGENT_TAIL_BYTES = 2 * 1024 * 1024;
-/** Sessions keep their desk for a while after exiting, so restarts reuse it. */
+/**
+ * Sessions keep their desk for a while after exiting, so restarts reuse it.
+ * The default until prefs arrive, and the value used if they never do.
+ */
 const ENDED_GRACE_MS = 10 * 60 * 1000;
 
 export interface LiveSourceOptions {
@@ -31,6 +34,19 @@ export interface LiveSourceOptions {
   fs?: FsPort;
   proc?: ProcPort;
   clock?: Clock;
+}
+
+/**
+ * The two settings that decide which sessions exist rather than how they look.
+ *
+ * They live here because they are applied where slots are tracked: hiding a
+ * programmatic run has to stop it being tracked at all, not hide a desk that
+ * has already been built, and the grace period is what `syncRegistry` measures
+ * an exit against.
+ */
+export interface LiveOptions {
+  hideSdkSessions: boolean;
+  endedGraceMs: number;
 }
 
 interface Tracked {
@@ -66,6 +82,7 @@ export class LiveSource implements DataSource {
   private debounce: NodeJS.Timeout | null = null;
   private unknownSignals = 0;
   private autoCompactPct = 80;
+  private options: LiveOptions = { hideSdkSessions: true, endedGraceMs: ENDED_GRACE_MS };
 
   constructor(
     private readonly store: WorldStore,
@@ -77,6 +94,21 @@ export class LiveSource implements DataSource {
     this.claudeDir = options.claudeDir ?? join(homedir(), '.claude');
     this.registry = new Registry(this.fs, this.proc, this.clock, join(this.claudeDir, 'sessions'));
     this.locator = new Locator(this.fs, join(this.claudeDir, 'projects'));
+  }
+
+  /**
+   * Applied live, not just at startup.
+   *
+   * Turning SDK sessions back on has to make the ones already running appear,
+   * and shortening the grace period has to retire a desk that is already past
+   * the new limit — so this asks for a registry sync rather than waiting for
+   * the next poll to notice.
+   */
+  setOptions(options: LiveOptions): void {
+    const changed =
+      this.options.hideSdkSessions !== options.hideSdkSessions || this.options.endedGraceMs !== options.endedGraceMs;
+    this.options = options;
+    if (changed && this.unwatch) void this.syncRegistry().then(() => this.publish());
   }
 
   async start(): Promise<void> {
@@ -155,8 +187,17 @@ export class LiveSource implements DataSource {
     const seen = new Set<string>();
 
     for (const slot of slots) {
-      // Programmatic runs (SDK/eval) are noise in a visualizer of your desk.
-      if (slot.entrypoint === 'sdk-cli' || (slot.kind && slot.kind !== 'interactive')) continue;
+      // Programmatic runs (SDK/eval) are noise in a visualizer of your desk —
+      // by default. Someone driving the SDK all day is entitled to watch it.
+      //
+      // Turning the setting back on retires their desks at once rather than
+      // leaving them to time out through the ended-session grace period: they
+      // have not ended, they are being hidden, and a desk that lingers for ten
+      // minutes after you asked for it to go makes the switch look broken.
+      if (this.options.hideSdkSessions && (slot.entrypoint === 'sdk-cli' || (slot.kind && slot.kind !== 'interactive'))) {
+        if (this.tracked.has(slot.slotId)) this.removeSlot(slot.slotId);
+        continue;
+      }
       seen.add(slot.slotId);
 
       const existing = this.tracked.get(slot.slotId);
@@ -176,7 +217,7 @@ export class LiveSource implements DataSource {
     for (const [slotId, tracked] of this.tracked) {
       if (seen.has(slotId)) continue;
       if (tracked.endedAt === null) tracked.endedAt = now;
-      if (now - tracked.endedAt > ENDED_GRACE_MS) this.removeSlot(slotId);
+      if (now - tracked.endedAt > this.options.endedGraceMs) this.removeSlot(slotId);
     }
   }
 

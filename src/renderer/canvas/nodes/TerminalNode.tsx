@@ -3,6 +3,7 @@ import { paletteAt } from '@shared/palette';
 import type { AgentView, SessionView, WatchTask, WorkflowRun } from '@shared/model';
 import { ContextPill, PhaseBadge } from '../header/ContextPill';
 import { Spinner, TuiView } from '../tui/TuiView';
+import { useNow } from '../useNow';
 import { StatusLine } from '../tui/StatusLine';
 
 export type TerminalNodeData = {
@@ -11,14 +12,15 @@ export type TerminalNodeData = {
   agent?: AgentView;
   watches: WatchTask[];
   workflows: WorkflowRun[];
-  now: number;
   cols: number;
   bodyLines: number;
 };
 export type TerminalNodeType = Node<TerminalNodeData, 'terminal'>;
 
 export function TerminalNode({ data }: NodeProps<TerminalNodeType>): React.JSX.Element {
-  const { session, agent, watches, workflows, now, cols, bodyLines } = data;
+  const { session, agent, watches, workflows, cols, bodyLines } = data;
+  // Its own subscription, so the board does not rebuild to move a clock.
+  const now = useNow();
   const color = paletteAt(session.colorIndex);
   const cardId = agent ? agent.id : session.id;
   const title = agent ? `${agent.agentType} · ${agent.description || 'subagent'}` : session.title;
@@ -45,7 +47,12 @@ export function TerminalNode({ data }: NodeProps<TerminalNodeType>): React.JSX.E
       </header>
 
       <div className="term-node__body">
-        <TuiView cardId={cardId} cols={cols} maxLines={bodyLines} />
+        <TuiView
+          cardId={cardId}
+          cols={cols}
+          maxLines={bodyLines}
+          waitingFor={agent ? agent.description || agent.agentType : 'Waiting for the first line'}
+        />
         {!agent && <Spinner session={session} now={now} />}
       </div>
 

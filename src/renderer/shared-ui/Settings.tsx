@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
 import { engineClient } from '../engine/client';
 import { OFFICE_THEMES, dayFactorFor, resolveTheme } from '../office/theme/themes';
+import { MOTIF_NAMES, worldVoice } from '../office/world/architecture';
 import { usePrefs } from '../store/prefs';
-import { useWorld } from '../store/world';
 import type { DataMode } from '@shared/model';
-import type { MotionMode, OfficeDetail } from '@shared/prefs';
+import type { Horizon, OfficeDetail, Weather } from '@shared/prefs';
 import './settings.css';
 
 /**
@@ -17,7 +17,8 @@ import './settings.css';
 export function Settings({ onClose }: { onClose: () => void }): React.JSX.Element {
   const prefs = usePrefs((s) => s.prefs);
   const update = usePrefs((s) => s.update);
-  const simSeed = useWorld((s) => s.world.health.simSeed);
+  // Free: both answers come off the first two draws of the seed.
+  const voice = worldVoice(prefs.office.worldSeed);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -77,17 +78,6 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
           </div>
         </Group>
 
-        <Group label="Motion" hint="Reduced swaps movement for fades and keeps the layout.">
-          <Segmented
-            value={prefs.motion}
-            options={[
-              ['auto', 'Follow system'],
-              ['full', 'Full'],
-              ['reduced', 'Reduced'],
-            ]}
-            onChange={(value) => update({ motion: value as MotionMode })}
-          />
-        </Group>
 
         <Group
           label="What to show"
@@ -105,26 +95,35 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
               engineClient.post({ type: 'setDataMode', mode });
             }}
           />
-          {prefs.mode === 'simulation' && simSeed > 0 && (
-            <p className="sheet__note">
-              Seed <code>{simSeed}</code>. Every session, every fan-out and every quiet stretch follows from
-              it — start the app with <code>CCV_SIM_SEED={simSeed}</code> to watch this one again.
-            </p>
-          )}
         </Group>
 
         <Group
           label="This world"
           hint="How the office itself is built: how its terraces step, and what it is made of. Kept between launches, so it stays your office."
         >
+          <p className="sheet__note">
+            This one is fond of <strong>{MOTIF_NAMES[voice.favoured[0]!]}</strong>, then{' '}
+            {MOTIF_NAMES[voice.favoured[1]!]} and {MOTIF_NAMES[voice.favoured[2]!]} — but it can build anything
+            in the bank, and every world gets a waterfall and a drape canopy.
+          </p>
           <button className="sheet__action" onClick={() => update({ office: { worldSeed: rollSeed() } })}>
             Build a different world
           </button>
+          {/*
+            * Naming it is most of what makes the button above worth pressing.
+            *
+            * A world draws its favourites out of the whole bank on first launch
+            * and then keeps them for ever — which is right, and which also
+            * means somebody who has had this open for a month has seen a
+            * fraction of what it can build and no way of knowing that. "Build a
+            * different world" said nothing about what would be different.
+            * Saying what this one is fond of turns a mystery button into an
+            * offer.
+            */}
           <Segmented
             value={prefs.office.detail}
             options={[
               ['quiet', 'Quiet'],
-              ['composed', 'Composed'],
               ['ornate', 'Ornate'],
             ]}
             onChange={(value) => update({ office: { detail: value as OfficeDetail } })}
@@ -134,13 +133,46 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
             builds everything it is allowed to. The seed is unchanged either way — it is the same place,
             more or less furnished.
           </p>
+          <Segmented
+            value={prefs.office.weather}
+            options={[
+              ['clear', 'Clear'],
+              ['cloudy', 'Cloudy'],
+              ['rain', 'Rain'],
+            ]}
+            onChange={(value) => update({ office: { weather: value as Weather } })}
+          />
+          <Segmented
+            value={prefs.office.horizon}
+            options={[
+              ['none', 'Empty sky'],
+              ['isles', 'Isles'],
+            ]}
+            onChange={(value) => update({ office: { horizon: value as Horizon } })}
+          />
+          <p className="sheet__note">
+            What is out there past the office: small terraces on their own rock, cut from the same stone as
+            the campus and turning with it. The void has no distance in it — every platform is equally far
+            away because there is nothing behind them to be further than — so these say it by being small,
+            low and nearly the colour of the sky.
+          </p>
+          <Toggle
+            checked={prefs.office.labels}
+            onChange={(on) => update({ office: { labels: on } })}
+            label="Room and desk names"
+          />
+          <p className="sheet__note">
+            The only text in the world. Off, the office is a place rather than a plan — you can still find a
+            session by pointing at a figure, and the colours on the desks are the same ones the canvas uses.
+          </p>
           <Toggle
             checked={prefs.office.npcs}
             onChange={(on) => update({ office: { npcs: on } })}
-            label="Caretakers"
+            label="Other people"
           />
           <p className="sheet__note">
-            Caretakers are people who work here but are not your sessions; nothing they do means anything.
+            People who work here but are not your sessions. They sit, read, fetch a drink and shoo the birds
+            off the towers; nothing any of it means anything.
           </p>
         </Group>
 

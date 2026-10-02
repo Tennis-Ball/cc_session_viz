@@ -12,6 +12,7 @@ import type {
   WatchTask,
   WorkflowRun,
 } from '../../shared/model';
+import type { Activity } from '../../shared/activity';
 import { toolToActivity } from '../parse/toolActivity';
 import type { TranscriptEntry } from '../../shared/transcript';
 import type { Signal, TaskNotification } from '../parse/signals';
@@ -21,6 +22,17 @@ import { diffOf, EntryLog, previewResult, summarizeResult } from './entryLog';
 import { LivenessMachine, type LivenessEvidence } from './liveness';
 
 const AGENT_ID_RE = /^a[0-9a-f]{16}$/;
+/**
+ * The states that mean "nothing of my own is pending", and so the only ones
+ * `rest` is allowed to exchange for one another. See `restingActivity`.
+ */
+const RESTING: ReadonlySet<Activity> = new Set<Activity>([
+  'thinking',
+  'planning',
+  'delegating',
+  'orchestrating',
+  'watching',
+]);
 const AGENT_STALE_MS = 15 * 60 * 1000;
 /** A turn that ended hours ago is history, not something to glow about. */
 const UNREAD_TTL_MS = 10 * 60 * 1000;
@@ -92,7 +104,6 @@ export class SessionRuntime {
   private attentionTool: { kind: 'question' | 'planApproval'; since: Ms; detail?: string } | null = null;
   private cmuxAttention: { kind: 'permission'; detail?: string } | null = null;
   private cmux: SessionView['cmux'];
-  private groupId: string | undefined;
 
   private readonly pendingSpawns = new Map<string, { agentType: string; description: string; at: Ms }>();
   private readonly pendingWorkflows = new Map<string, { name: string; phases: { title: string }[]; at: Ms }>();
@@ -164,10 +175,6 @@ export class SessionRuntime {
 
   setCmux(info: SessionView['cmux']): void {
     this.cmux = info;
-  }
-
-  setGroup(groupId: string | undefined): void {
-    this.groupId = groupId;
   }
 
   markSeen(): void {
@@ -460,6 +467,90 @@ export class SessionRuntime {
       default:
         break;
     }
+
+    this.rest(at);
+  }
+
+  /**
+   * What the main agent is doing when no tool call of its own is pending.
+   *
+   * "Thinking" was the answer to every one of these, which is true of the model
+   * and wrong about the session. An agent in plan mode is *planning*; one whose
+   * subagents are still out is *delegating*; one sitting on a workflow is
+   * *orchestrating*; one with a background task running is *watching*. All four
+   * are long stretches — minutes, not the second a tool call lasts — and
+   * collapsing them to thinking is why four rooms of this office were furnished
+   * and never used: over four minutes of a ten-session house the atelier was
+   * reached once, and the war room, watchtower and commons not at all, while
+   * every figure stood at its desk.
+   *
+   * None of it needed new data. Plan mode, the subagent roster, the workflow
+   * runs and the lanterns were all already here; nothing ever asked them what
+   * the figure was doing.
+   */
+  private restingActivity(): { activity: Activity; label: string } {
+    const run = this.runningWorkflow();
+    if (run) return { activity: 'orchestrating', label: `running ${run.name}` };
+
+    const out = this.foregroundSubagents();
+    if (out > 0) {
+      return {
+        activity: 'delegating',
+        label: out === 1 ? 'waiting on a subagent' : `waiting on ${out} subagents`,
+      };
+    }
+
+    /*
+     * Plan mode, including the wait to be told yes — which the plan's own
+     * design puts at the whiteboard, presenting. Waiting is deliberately *not*
+     * answered here: `awaiting` belongs to the pending ExitPlanMode call, which
+     * this never runs alongside, and returning it from a resolver that only
+     * ever swaps one resting state for another would be a state with no way
+     * back out of it.
+     */
+    if (this.plan) return { activity: 'planning', label: 'working on a plan' };
+
+    const watch = this.liveWatch();
+    if (watch) return { activity: 'watching', label: watch.label };
+
+    return { activity: 'thinking', label: 'thinking' };
+  }
+
+  /**
+   * Re-decides the resting state after something changed around the agent.
+   *
+   * A subagent starting, a lantern going out or plan mode being entered are
+   * facts about the session rather than tool calls, so without this the figure
+   * would not move until the model next happened to think — which during a fan
+   * out is not for minutes. It is deliberately narrow: it only ever replaces
+   * one resting state with another, so writing a reply, going idle, compacting
+   * and stalling are left exactly as the signal that caused them set them.
+   */
+  private rest(at: Ms): void {
+    if (this.main.pending.size > 0) return;
+    if (!RESTING.has(this.main.activity)) return;
+    const next = this.restingActivity();
+    if (next.activity === this.main.activity) return;
+    this.main.setActivity(next.activity, at, { activity: next.activity, label: next.label });
+  }
+
+  /** Subagents the main agent is actually waiting on, so background ones do not count. */
+  private foregroundSubagents(): number {
+    let out = 0;
+    for (const agent of this.agents.values()) {
+      if (agent.role !== 'main' && agent.status === 'running' && !agent.background) out += 1;
+    }
+    return out;
+  }
+
+  private runningWorkflow(): WorkflowRun | null {
+    for (const run of this.workflows.values()) if (run.status === 'running') return run;
+    return null;
+  }
+
+  private liveWatch(): WatchTask | null {
+    for (const watch of this.watches.values()) if (watch.status === 'active') return watch;
+    return null;
   }
 
   /** Side effects that depend on which tool started. */
@@ -818,10 +909,7 @@ export class SessionRuntime {
   }
 
   private hasForegroundSubagent(): boolean {
-    for (const agent of this.agents.values()) {
-      if (agent.role !== 'main' && agent.status === 'running' && !agent.background) return true;
-    }
-    return false;
+    return this.foregroundSubagents() > 0;
   }
 
   private agentFor(agentId?: string): AgentRuntime {
@@ -1022,7 +1110,6 @@ export class SessionRuntime {
       ...(this.cost ? { cost: this.cost } : {}),
       ...(this.awaySummary ? { awaySummary: this.awaySummary } : {}),
       ...(this.cmux ? { cmux: this.cmux } : {}),
-      ...(this.groupId ? { groupId: this.groupId } : {}),
     };
   }
 

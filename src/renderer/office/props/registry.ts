@@ -43,6 +43,28 @@ export function registerProp(name: string, builder: Builder): void {
 }
 
 const MAX_UPSCALE = 2;
+
+/**
+ * How much of one axis the furniture may take.
+ *
+ * `WALK_MARGIN` is a *rim*, and subtracting two of them is only sensible while
+ * the platform is comfortably wider than both. A stacked desk deck is 3.2 deep
+ * and two margins are 2.7 of that, so the allowance came out at half a unit and
+ * `fitToPlatform` clamped the pod to its 0.35 floor — a sixth the size of every
+ * other desk in the office, which are all sitting at the 2.0 cap. A raised desk
+ * was a rug with a speck on it, and the report was the honest one: you cannot
+ * see the session desks.
+ *
+ * So the rim gives way on a small platform rather than eating it. The lower
+ * bound is a *fraction*, which cannot collapse however narrow the deck gets,
+ * and the walkability check is what actually guarantees the floor still joins
+ * up — which is what it was always for.
+ */
+const MIN_SHARE = 0.62;
+
+function allowance(size: number): number {
+  return Math.max(size * MIN_SHARE, Math.min(size * FILL, size - 2 * WALK_MARGIN));
+}
 /**
  * Height follows width, but only partly.
  *
@@ -80,8 +102,8 @@ function fitToPlatform(prop: PropBuild, platform: Platform): PropBuild {
 
   const width = Math.max(0.001, box.max.x - box.min.x);
   const depth = Math.max(0.001, box.max.z - box.min.z);
-  const allowedWidth = Math.min(platform.size[0] * FILL, platform.size[0] - 2 * WALK_MARGIN);
-  const allowedDepth = Math.min(platform.size[1] * FILL, platform.size[1] - 2 * WALK_MARGIN);
+  const allowedWidth = allowance(platform.size[0]);
+  const allowedDepth = allowance(platform.size[1]);
   const scale = Math.min(MAX_UPSCALE, Math.max(0.35, Math.min(allowedWidth / width, allowedDepth / depth)));
 
   // Centre horizontally; the base stays on the floor, so y is never moved.

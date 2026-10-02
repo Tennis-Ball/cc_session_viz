@@ -2,12 +2,12 @@ import type { BufferGeometry } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { rng } from '@shared/rand';
 import type { OfficeDetail } from '@shared/prefs';
-import { box, buildProp, cylinder, type Part } from '../props/kit';
+import { box, buildProp, cylinder, tagStage, type Part } from '../props/kit';
 import { buildPropFor } from '../props/registry';
 import { mixHex, stoneVariant, type ResolvedTheme } from '../theme/themes';
 import { levelY, PLATFORM_THICKNESS } from './campusTemplate';
-import { walkableRing, type Campus, type Platform } from './layout';
-import { buildOccupancy, type Blocker } from './occupancy';
+import { walkableRing, walkwaySpan, type Campus, type Platform } from './layout';
+import { HEAD_CLEARANCE, buildOccupancy, type Blocker } from './occupancy';
 
 /**
  * The architecture the office is set in.
@@ -36,6 +36,17 @@ export type Piece =
       /** Yaw, for the segments that approximate a curve. */
       rotY?: number;
       grad: [number, number];
+      /**
+       * How far this piece has already dissolved into the sky, 0–1.
+       *
+       * Only water uses it. The shader dissolves everything into the sky as it
+       * nears the void plane, which is the right rule for a building standing
+       * on rock and the wrong one for a waterfall: the void is set from the
+       * lowest *floor*, and a fall starts below that and keeps going, so it ran
+       * off the bottom of the window still fully saturated. A fall has to
+       * dissolve because it is falling, not because of where the ground is.
+       */
+      fade?: number;
     }
   | {
       shape: 'column';
@@ -58,9 +69,35 @@ export type Piece =
       grad: [number, number];
     };
 
+/**
+ * The two motifs every world gets, whatever else it favours.
+ *
+ * Weights alone cannot guarantee anything, and these two are worth guaranteeing:
+ *
+ * - **Water**, because a waterfall is the only moving thing the architecture
+ *   has, and the biggest single gesture in the whole kit. A campus with one is
+ *   a place; a campus without is a model.
+ * - **Cloth**, because everything else here is cut stone and does not bend.
+ *   The drape is the one object in the vocabulary that hangs, and the eye reads
+ *   the sag as weight precisely because nothing else in the frame gives at all.
+ *
+ * They are *mandated*, not merely available: each gets first refusal on a
+ * platform before the ordinary budget rolls, so a world cannot simply fail to
+ * show them the way it could when they were one option among three.
+ */
+const ALWAYS: Motif[] = ['waterfall', 'drape'];
+
 export interface ArchPlan {
-  /** Which dialect this world was built in. */
-  dialect: string;
+  /** What this world prefers to build, most-favoured first. See `worldVoice`. */
+  favoured: Motif[];
+  /**
+   * What is actually standing, per platform.
+   *
+   * The plan used to say only where the *geometry* went, which meant nothing
+   * downstream — not a test, not Settings — could ask the simple question
+   * "did this world build a waterfall". It is one map and it costs nothing.
+   */
+  motifs: Map<string, Motif>;
   /** Per platform, in that platform's local coordinates, like a prop. */
   onPlatform: Map<string, Piece[]>;
   /** Freestanding pieces, already in world coordinates. */
@@ -91,7 +128,9 @@ type Motif =
   | 'waterfall'
   | 'aqueduct'
   | 'pavilion'
-  | 'pylon';
+  | 'pylon'
+  | 'drape'
+  | 'sail';
 type Accentpiece = 'pool' | 'lantern' | 'planter' | 'none';
 
 /** Which side of a platform a piece sits on. */
@@ -99,20 +138,69 @@ type Edge = 'north' | 'south' | 'east' | 'west';
 const EDGES: Edge[] = ['north', 'south', 'east', 'west'];
 
 /**
- * A world speaks one dialect. Two large motifs is enough range for a dozen
- * platforms and few enough that the campus reads as one building — which is
- * the thing a world of eight motifs can never do.
+ * What a world is built out of.
+ *
+ * It used to speak a *dialect*: three motifs out of thirteen, chosen once from
+ * the seed, and nothing else — ever. That gave every campus a strong accent,
+ * which was the point, and it had a cost nobody notices until they have had
+ * the app open for a month: the other ten motifs are not rare in your world,
+ * they are permanently absent from it. Rebuilding the world gave you a
+ * different three, not more of them.
+ *
+ * So every world can now build anything, and what differs between worlds is
+ * what it *prefers*. Uniqueness has to come from the ordering rather than from
+ * rolling the dice per platform — the whole bank drawn uniformly is not a bank
+ * full of interesting worlds, it is the same soup every time, and a campus
+ * wearing one of everything is a curiosity shop rather than a building.
+ *
+ * Opening the bank up is also what turned up the older bug underneath it. Four
+ * of the heavy gestures — the dome, the tower, the minaret, the pavilion —
+ * asked `f.fit` whether the terrace could hold them, which is a test none of
+ * them can pass on any platform the generator makes, so all four declined
+ * everywhere and always had. Under dialects that was invisible: a world fond
+ * of domes simply built the other two. Under weights it is a world fond of
+ * domes with no dome in it. They stand on `f.clear` now; see `EdgeFrame`.
+ *
+ * The weights below are the whole of that argument:
+ *
+ * - The top three carry most of it. On a campus of about ten shared platforms
+ *   at the ornate budget, roughly eight get a gesture — so a 7 / 5 / 3.5 split
+ *   over a baseline of 1 puts four or five of them in the favoured three and
+ *   leaves two or three for the rest of the bank. That is a place with an
+ *   accent that also has surprises in it.
+ * - The tail is never zero. One unexpected thing is what makes a world feel
+ *   built rather than generated, and it is also the only way somebody ever
+ *   sees the other ten.
+ * - Saturation is not this table's problem. `MOTIF_CAP` already stops three
+ *   minarets becoming seven, and it applies whatever the weights say — being
+ *   fond of towers must not turn a skyline into a fence.
  */
-const DIALECTS: { id: string; motifs: Motif[] }[] = [
-  { id: 'arcades', motifs: ['arcade', 'pylon', 'wall'] },
-  { id: 'domes', motifs: ['dome', 'arcade', 'canopy'] },
-  { id: 'spires', motifs: ['minaret', 'screen', 'tower'] },
-  { id: 'waters', motifs: ['waterfall', 'aqueduct', 'ghat'] },
-  { id: 'pavilions', motifs: ['pavilion', 'canopy', 'minaret'] },
-  { id: 'steps', motifs: ['ghat', 'pylon', 'wall'] },
-  { id: 'ramparts', motifs: ['wall', 'tower', 'screen'] },
-  { id: 'courts', motifs: ['canopy', 'arcade', 'pavilion'] },
-];
+const FAVOUR = [7, 5, 3.5];
+const BASELINE = 1;
+
+export interface WorldVoice {
+  /** In order. The first is the one you would name the world after. */
+  favoured: Motif[];
+  weight: Map<Motif, number>;
+}
+
+/** What a motif is called, where a person has to read it. */
+export const MOTIF_NAMES: Record<Motif, string> = {
+  arcade: 'colonnades',
+  minaret: 'minarets',
+  dome: 'domes',
+  canopy: 'canopies',
+  wall: 'long walls',
+  waterfall: 'waterfalls',
+  aqueduct: 'aqueducts',
+  ghat: 'bathing steps',
+  pylon: 'pylons',
+  pavilion: 'pavilions',
+  screen: 'pierced screens',
+  tower: 'towers',
+  drape: 'drape canopies',
+  sail: 'cloth sails',
+};
 
 /**
  * How many platforms a motif may claim across a whole campus.
@@ -129,6 +217,8 @@ const MOTIF_CAP: Partial<Record<Motif, number>> = {
   aqueduct: 2,
   pylon: 4,
   pavilion: 4,
+  drape: 4,
+  sail: 3,
 };
 
 /**
@@ -137,9 +227,8 @@ const MOTIF_CAP: Partial<Record<Motif, number>> = {
  * The vocabulary outgrew the restraint. Every motif in it earns its place on
  * its own, and a campus wearing all of them at once is a curiosity shop rather
  * than a building — so the question "how much" stopped being a constant and
- * became a choice. `composed` is deliberately below where the numbers used to
- * sit: the honest read of "there's just a lot going on" is that the house
- * style was already past its own bar.
+ * became a choice — and then a choice between two, because three degrees of
+ * "how much architecture" is a slider pretending to be a decision.
  */
 const BUDGET: Record<OfficeDetail, {
   /** Chance a shared platform takes a large gesture, and a desk platform. */
@@ -155,23 +244,39 @@ const BUDGET: Record<OfficeDetail, {
   roof: number;
 }> = {
   quiet: { major: 0.46, deskMajor: 0.12, accent: 0.12, gateway: 0.1, cap: 0.55, roof: 0.6 },
-  composed: { major: 0.72, deskMajor: 0.26, accent: 0.26, gateway: 0.2, cap: 1, roof: 0.5 },
-  ornate: { major: 0.96, deskMajor: 0.58, accent: 0.52, gateway: 0.42, cap: 1.8, roof: 0.75 },
+  /*
+   * The old `composed`, opened up a little — not the old `ornate`.
+   *
+   * `ornate` used to mean "build everything it is allowed to", and a campus
+   * wearing every motif at once is a curiosity shop: the reason three settings
+   * existed at all. With the middle gone, the richer of the two has to be the
+   * one somebody would actually leave switched on, so it is the house style
+   * with a slightly freer hand rather than the maximum.
+   */
+  ornate: { major: 0.8, deskMajor: 0.3, accent: 0.3, gateway: 0.26, cap: 1.15, roof: 0.55 },
 };
 
 export function planArchitecture(
   campus: Campus,
   seed: number,
-  detail: OfficeDetail = 'composed',
+  detail: OfficeDetail = 'ornate',
 ): ArchPlan {
   const budget = BUDGET[detail];
   const random = rng(seed);
-  const dialect = DIALECTS[Math.floor(random() * DIALECTS.length)] ?? DIALECTS[0]!;
+  const voice = voiceFrom(random);
   const used = new Map<Motif, number>();
+  const motifs = new Map<string, Motif>();
   const onPlatform = new Map<string, Piece[]>();
 
   // Which edges a walkway already meets: nothing may be built across a way in.
   const busy = doorwayEdges(campus);
+  // And where those walkways actually are, so nothing is built *into* one
+  // either. The edge rule only keeps a building off the mouth of a flight;
+  // a cornice, a canopy beam or a colonnade is allowed to oversail the rim,
+  // and what it oversails is the gap the flight crosses.
+  const ways = campus.connectors.map(walkwaySpan);
+  // Collected as the aqueducts are built and answered once they all exist.
+  const spills: Spill[] = [];
 
   // One height for the whole campus, jittered per building. A kingdom is one
   // mason's work, and the give-away is that the courses line up across things
@@ -188,6 +293,74 @@ export function planArchitecture(
     if (platform.over && byId.has(platform.over)) upperOf.set(platform.over, platform);
   }
 
+  /*
+   * The rock and the piers, for every platform, before anything else.
+   *
+   * These were computed inside the main loop, which meant the mandate pass
+   * above could only check its gesture against *itself* — and then the main
+   * loop would check it again with the substructure included and quietly throw
+   * it out, leaving a world without the canopy it was promised. They also
+   * consume the seed, so they cannot simply be computed twice: the whole plan
+   * has to see the same draws in the same order.
+   *
+   * A stacked terrace has no rock. It is held up by the platform beneath it,
+   * and giving it a substructure would drive a column of stone down through
+   * its own host and out of the bottom of the world.
+   */
+  const groundOf = new Map<string, Piece[]>();
+  for (const platform of campus.platforms) {
+    groundOf.set(
+      platform.id,
+      platform.over
+        ? []
+        : [
+            ...substructure(platform, random, bedrock),
+            ...support(platform, upperOf.get(platform.id), campus, random, storey),
+          ],
+    );
+  }
+
+  /*
+   * First refusal, before anything else is built.
+   *
+   * A mandated motif walks the shared platforms in a seeded order and takes the
+   * first one that will have it. Walking rather than picking the "best" keeps
+   * the choice varied between worlds; taking the *first* that accepts is what
+   * makes the guarantee a guarantee — a dome will decline a terrace too narrow
+   * to hold it, and so will a waterfall.
+   */
+  const claimed = new Map<string, { motif: Motif; pieces: Piece[] }>();
+  const wanted = [...ALWAYS];
+  const candidates = campus.platforms.filter(
+    (platform) => !platform.over && platform.kind !== 'desk' && openEdges(platform, busy).length > 0,
+  );
+  for (const motif of wanted) {
+    const start = Math.floor(random() * Math.max(1, candidates.length));
+    for (let i = 0; i < candidates.length; i += 1) {
+      const platform = candidates[(start + i) % candidates.length]!;
+      if (claimed.has(platform.id)) continue;
+      const open = openEdges(platform, busy);
+      if (open.length === 0) continue;
+      const edge = takeEdge([...open], outward(platform, campus), random, 0.8);
+      const made = major(motif, platform, edge, random, storey, campus, spills);
+      if (made.length === 0) continue;
+      // And it has to leave the room walkable, which is the one rule a
+      // mandate does not get to override. Checked here as well as below so a
+      // motif that would be thrown out simply moves on to the next platform
+      // rather than being dropped and leaving the world without one.
+      if (!walkable(platform, [...(groundOf.get(platform.id) ?? []), ...made], standingSpots(platform, campus))) {
+        continue;
+      }
+      // And it must not be standing in a walkway, for the same reason: better
+      // for a mandated gesture to move to the next platform than to be built
+      // here and thrown out below, which is how a world ended up with neither.
+      if (!clearOfWalkways(platform, made, ways)) continue;
+      claimed.set(platform.id, { motif, pieces: made });
+      used.set(motif, (used.get(motif) ?? 0) + 1);
+      break;
+    }
+  }
+
   for (const platform of campus.platforms) {
     // A stacked terrace has no rock: it is held up by the platform beneath it.
     // Giving it a substructure would drive a column of stone down through its
@@ -202,11 +375,10 @@ export function planArchitecture(
      * by its own railing. The rock and the piers cannot be given up; a railing
      * can.
      */
-    const ground: Piece[] = platform.over
-      ? []
-      : [...substructure(platform, random, bedrock), ...support(platform, upperOf.get(platform.id), campus, random, storey)];
+    const ground: Piece[] = groundOf.get(platform.id) ?? [];
 
-    const open = EDGES.filter((edge) => !(busy.get(platform.id) ?? new Set<Edge>()).has(edge));
+    const open = openEdges(platform, busy);
+    const reserved = claimed.get(platform.id);
 
     // A deck that is somebody's desk is furnished already; one that is not is a
     // belvedere, and a belvedere is worth roofing.
@@ -216,8 +388,11 @@ export function planArchitecture(
     let accent: Piece[] = [];
     let motif: Motif | null = null;
 
-    if (!platform.over && open.length > 0) {
-      const available = dialect.motifs.filter(
+    if (reserved) {
+      // Already spoken for. It has had its edge taken and its motif counted.
+      built = reserved.pieces;
+    } else if (!platform.over && open.length > 0) {
+      const available = ALL_MOTIFS.filter(
         (item) => (used.get(item) ?? 0) < Math.round((MOTIF_CAP[item] ?? Infinity) * budget.cap),
       );
       // Desks get the quiet half of the vocabulary: they are small, they are
@@ -227,14 +402,13 @@ export function planArchitecture(
       if (pool.length > 0 && random() < (platform.kind === 'desk' ? budget.deskMajor : budget.major)) {
         const edge = takeEdge(open, outward(platform, campus), random, 0.8);
         // A motif may decline — a dome will not perch on a terrace too narrow
-        // to hold it — so try the rest of the dialect before giving up on the
-        // platform. Rotating the start keeps the choice seeded rather than
-        // always preferring whichever motif the dialect lists first.
-        const start = Math.floor(random() * pool.length);
-        for (let i = 0; i < pool.length; i++) {
-          const choice = pool[(start + i) % pool.length]!;
-          const made = major(choice, platform, edge, random, storey);
+        // to hold it — so work down the whole bank before giving up on the
+        // platform. The order is drawn against this world's weights, so what
+        // it is fond of comes first and everything else is still reachable.
+        for (const choice of weightedOrder(pool, voice.weight, random)) {
+          const made = major(choice, platform, edge, random, storey, campus, spills);
           if (made.length === 0) continue;
+          if (!clearOfWalkways(platform, made, ways)) continue;
           motif = choice;
           built = made;
           break;
@@ -260,23 +434,111 @@ export function planArchitecture(
      * and drop the accent — and then the whole gesture — if it does not walk.
      */
     const standing = standingSpots(platform, campus);
+    const ok = (candidate: Piece[]): boolean =>
+      walkable(platform, candidate, standing) && clearOfWalkways(platform, candidate, ways);
     let pieces = [...ground, ...built, ...accent];
-    if (!walkable(platform, pieces, standing)) {
+    if (!ok(pieces)) {
       accent = [];
       pieces = [...ground, ...built];
-      if (!walkable(platform, pieces, standing)) {
+      if (!ok(pieces)) {
         built = [];
         motif = null;
         pieces = ground;
       }
     }
 
-    if (motif) used.set(motif, (used.get(motif) ?? 0) + 1);
+    if (motif) {
+      used.set(motif, (used.get(motif) ?? 0) + 1);
+      motifs.set(platform.id, motif);
+    }
+    if (reserved && built.length > 0) motifs.set(platform.id, reserved.motif);
+    // A mandated gesture that the walkability check threw out is no longer
+    // standing, so it must not go on being counted as built.
+    if (reserved && built.length === 0) used.set(reserved.motif, Math.max(0, (used.get(reserved.motif) ?? 1) - 1));
     if (pieces.length > 0) onPlatform.set(platform.id, pieces);
   }
 
-  return { dialect: dialect.id, onPlatform, detached: voidWorks(campus, random, budget.gateway) };
+  /*
+   * Last, because this is the one gesture that is about two platforms.
+   *
+   * Everything else here is planned per platform and checked per platform, and
+   * an aqueduct's water is the exception: where it goes depends on what the
+   * rest of the campus turned out to be. Run after the walkability pass as
+   * well, deliberately — a stream and the pool it makes are both below
+   * `FLOOR_CLEARANCE`, so the nav grid never sees them and nobody is ever
+   * walled in by water.
+   */
+  resolveSpills(spills, campus, onPlatform, random);
+
+  return { favoured: voice.favoured, motifs, onPlatform, detached: voidWorks(campus, random, budget.gateway) };
 }
+
+/**
+ * What a world is fond of, without building it.
+ *
+ * Read off the first few draws of the seed, so it costs nothing — which is what
+ * lets Settings say what you are looking at. It goes through exactly the draws
+ * the planner does, in the same order, because the one thing worse than not
+ * naming the world is naming it wrong.
+ */
+export function worldVoice(seed: number): WorldVoice {
+  return voiceFrom(rng(seed));
+}
+
+function voiceFrom(random: () => number): WorldVoice {
+  // A shuffle of the whole bank, so the ordering itself is the world's taste.
+  const order = [...ALL_MOTIFS];
+  for (let i = order.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1));
+    [order[i], order[j]] = [order[j]!, order[i]!];
+  }
+
+  const weight = new Map<Motif, number>();
+  order.forEach((motif, i) => {
+    // A little jitter on the tail, so two worlds that favour the same three
+    // still differ in what turns up behind them.
+    weight.set(motif, (FAVOUR[i] ?? BASELINE) * (i < FAVOUR.length ? 1 : 0.6 + random() * 0.8));
+  });
+  return { favoured: order.slice(0, FAVOUR.length), weight };
+}
+
+/**
+ * The pool, in an order drawn against the weights, without replacement.
+ *
+ * An order rather than a single pick, because a motif is allowed to decline —
+ * a dome will not stand on a terrace too narrow for it — and the fallback then
+ * has to obey the same preferences the first choice did. Picking again at
+ * random on a refusal is how a world ends up looking like every other one
+ * precisely on the platforms where something interesting was going to happen.
+ */
+/** Which edges of a platform nothing is standing in the way of. */
+function openEdges(platform: Platform, busy: Map<string, Set<Edge>>): Edge[] {
+  const taken = busy.get(platform.id) ?? new Set<Edge>();
+  return EDGES.filter((edge) => !taken.has(edge));
+}
+
+function weightedOrder(pool: Motif[], weight: Map<Motif, number>, random: () => number): Motif[] {
+  const left = [...pool];
+  const out: Motif[] = [];
+  while (left.length > 0) {
+    let total = 0;
+    for (const motif of left) total += weight.get(motif) ?? BASELINE;
+    let roll = random() * total;
+    let index = left.length - 1;
+    for (let i = 0; i < left.length; i += 1) {
+      roll -= weight.get(left[i]!) ?? BASELINE;
+      if (roll <= 0) {
+        index = i;
+        break;
+      }
+    }
+    out.push(left[index]!);
+    left.splice(index, 1);
+  }
+  return out;
+}
+
+const ALL_MOTIFS = Object.keys(MOTIF_NAMES) as Motif[];
 
 /**
  * Which way is away from the rest of the campus.
@@ -343,7 +605,7 @@ function standingSpots(platform: Platform, campus: Campus): Standing {
     if (connector.to === platform.id) doors.push([connector.b[0], connector.b[2]]);
   }
   const spots: [number, number][] = [...doors];
-  const prop = buildPropFor(platform, PLAN_PALETTE);
+  const prop = planProp(platform);
   for (const slot of prop?.slots ?? []) {
     spots.push([platform.position[0] + slot.position[0], platform.position[1] + slot.position[2]]);
   }
@@ -374,9 +636,45 @@ function support(
 }
 
 /** Does the floor still join up, with this built on it? */
+/**
+ * Nothing may stand where a walkway is.
+ *
+ * Buildings are planned per platform and walkways between them, and for as long
+ * as the two never spoke a canopy beam could oversail a rim and hang directly
+ * over the gap a flight of stairs climbs. On screen that is a staircase passing
+ * through a wall, which is the loudest thing this office can do wrong.
+ *
+ * `HEAD_CLEARANCE` above the flight counts as in the way as well: a beam at
+ * head height over a stair is not a collision, but it is still something a
+ * figure walks through.
+ */
+function clearOfWalkways(platform: Platform, pieces: readonly Piece[], ways: readonly Span[]): boolean {
+  if (ways.length === 0) return true;
+  const base = levelY(platform.level);
+  for (const blocker of archBlockers(pieces)) {
+    const minX = blocker.x + platform.position[0] - blocker.halfWidth;
+    const maxX = blocker.x + platform.position[0] + blocker.halfWidth;
+    const minZ = blocker.z + platform.position[1] - blocker.halfDepth;
+    const maxZ = blocker.z + platform.position[1] + blocker.halfDepth;
+    const bottom = blocker.base + base;
+    const top = blocker.top + base;
+    for (const way of ways) {
+      // A hair of contact at a rim is how a landing meets a floor, not a clash.
+      if (Math.min(maxX, way.maxX) - Math.max(minX, way.minX) <= 0.2) continue;
+      if (Math.min(maxZ, way.maxZ) - Math.max(minZ, way.minZ) <= 0.2) continue;
+      if (top <= way.minY + 0.1) continue;
+      if (bottom >= way.maxY + HEAD_CLEARANCE) continue;
+      return false;
+    }
+  }
+  return true;
+}
+
+type Span = ReturnType<typeof walkwaySpan>;
+
 function walkable(platform: Platform, pieces: readonly Piece[], standing: Standing): boolean {
   if (standing.spots.length < 2) return true;
-  const prop = buildPropFor(platform, PLAN_PALETTE);
+  const prop = planProp(platform);
   const grid = buildOccupancy(platform, prop?.geometry ?? null, standing.doors, archBlockers(pieces));
   return grid.connects(standing.spots);
 }
@@ -398,6 +696,24 @@ const PLAN_PALETTE = {
   plant: '#ffffff',
   metal: '#ffffff',
 };
+
+/**
+ * The furniture, built once per platform per plan.
+ *
+ * `buildPropFor` merges a fresh BufferGeometry every call, and the planner asks
+ * about the same platform's furniture several times over — once per walkability
+ * probe, once per edge frame. A WeakMap keyed on the platform keeps the plan a
+ * pure function of the seed while paying for the geometry once.
+ */
+const PLAN_PROPS = new WeakMap<Platform, ReturnType<typeof buildPropFor>>();
+
+function planProp(platform: Platform): ReturnType<typeof buildPropFor> {
+  const held = PLAN_PROPS.get(platform);
+  if (held !== undefined) return held;
+  const built = buildPropFor(platform, PLAN_PALETTE);
+  PLAN_PROPS.set(platform, built);
+  return built;
+}
 
 function pickAccent(random: () => number): Accentpiece {
   const roll = random();
@@ -429,14 +745,46 @@ interface EdgeFrame {
   along: number;
   /** Clear floor between the furniture and this rim. */
   room: number;
+  /**
+   * How far in from this rim you can build before you are inside the furniture.
+   *
+   * `room` is a *budget*: the rim band with a walking lane already deducted
+   * from it, which on most platforms leaves nothing at all — which is right
+   * for a balustrade that overhangs and costs no floor, and wrong as a licence
+   * for anything with mass. `clear` is a *measurement*: the prop declares the
+   * width and depth it needs kept free, and everything from there to the rim is
+   * genuinely empty deck. A gesture heavy enough that it must not overhang asks
+   * this, builds inside it, and lets the occupancy grid arbitrate the walking.
+   */
+  clear: number;
   /** True when the edge runs along x. */
   horizontal: boolean;
   /** A point on the edge, `offset` along it and `out` beyond the rim. */
   at(offset: number, y: number, out: number): [number, number, number];
   /** How far in from the rim a piece this thick may stand; negative overhangs. */
   fit(thickness: number, preferred?: number): number;
+  /**
+   * Where a piece this thick stands to keep its whole footprint on clear deck.
+   *
+   * The outward offset to hand `at`, so negative — mass goes *in* from the rim,
+   * never out over the drop. `deeper` (0…1) pushes it further in through
+   * whatever slack the deck has left. `null` means the deck cannot hold it,
+   * which is the only honest way for a heavy gesture to decline.
+   */
+  stand(thickness: number, deeper?: number): number | null;
   /** A box lying along the edge: `len` along, `thick` across. */
-  band(len: number, tall: number, thick: number, offset: number, y: number, out: number, tone: Tone, grad: [number, number]): Piece;
+  band(
+    len: number,
+    tall: number,
+    thick: number,
+    offset: number,
+    y: number,
+    out: number,
+    tone: Tone,
+    grad: [number, number],
+    /** Only water uses this; see `Piece`. */
+    fade?: number,
+  ): Piece;
 }
 
 function frameFor(platform: Platform, edge: Edge): EdgeFrame {
@@ -448,6 +796,8 @@ function frameFor(platform: Platform, edge: Edge): EdgeFrame {
     edge === 'north' ? [0, -1] : edge === 'south' ? [0, 1] : edge === 'west' ? [-1, 0] : [1, 0];
   const ring = walkableRing(platform);
   const across = horizontal ? ring[1] : ring[0];
+  const keep = planProp(platform)?.footprint ?? [0, 0];
+  const clear = Math.max(0, ((horizontal ? depth - keep[1] : width - keep[0]) / 2));
   const half: [number, number] = [width / 2, depth / 2];
 
   const at = (offset: number, y: number, out: number): [number, number, number] => [
@@ -461,11 +811,23 @@ function frameFor(platform: Platform, edge: Edge): EdgeFrame {
     normal,
     along,
     room: across,
+    clear,
     horizontal,
     at,
+    stand(thickness, deeper = 0) {
+      const slack = clear - thickness;
+      if (slack < 0) return null;
+      return -(thickness / 2 + slack * deeper);
+    },
     fit(thickness, preferred = 0.4) {
       /**
        * Positive is inward from the rim; negative overhangs the drop.
+       *
+       * This is the budget for light work that overhangs — a balustrade, a
+       * screen, a row of piers. Anything with mass asks `stand` instead: this
+       * one deducts a whole walking lane from the rim band, which on most
+       * platforms leaves nothing, and a dome that waits for permission from it
+       * waits for ever.
        *
        * A piece that cannot stand inside the walkable ring overhangs instead,
        * where it costs almost no floor — which, on a platform whose ring is one
@@ -483,13 +845,14 @@ function frameFor(platform: Platform, edge: Edge): EdgeFrame {
       const limit = across - CLEARANCE - BODY - thickness / 2;
       return limit < 0 ? -(thickness * 0.34) : Math.min(preferred, limit);
     },
-    band(len, tall, thick, offset, y, out, tone, grad) {
+    band(len, tall, thick, offset, y, out, tone, grad, fade) {
       return {
         shape: 'box',
         tone,
         size: horizontal ? [len, tall, thick] : [thick, tall, len],
         at: at(offset, y, out),
         grad,
+        ...(fade === undefined ? {} : { fade }),
       };
     },
   };
@@ -497,7 +860,34 @@ function frameFor(platform: Platform, edge: Edge): EdgeFrame {
 
 // ---------- the large gestures ----------
 
-function major(motif: Motif, platform: Platform, edge: Edge, random: () => number, storey: number): Piece[] {
+/**
+ * Where an aqueduct tips its water out, and what it has to clear.
+ *
+ * Recorded rather than built, because what happens to the water depends on what
+ * is underneath it, and when an aqueduct is planned the planner has only got as
+ * far as that one platform. The whole campus — every deck, and every other
+ * aqueduct's channel — is known once the loop has finished, and that is where
+ * the falls get built. See `resolveSpills`.
+ */
+interface Spill {
+  /** The platform the aqueduct stands on, whose local frame `at` is in. */
+  platformId: string;
+  /** The lip, in that platform's local frame. */
+  at: [number, number, number];
+  width: number;
+  /** Which way the channel runs, so the pool it makes lies the same way. */
+  horizontal: boolean;
+}
+
+function major(
+  motif: Motif,
+  platform: Platform,
+  edge: Edge,
+  random: () => number,
+  storey: number,
+  campus: Campus,
+  spills: Spill[],
+): Piece[] {
   const f = frameFor(platform, edge);
   switch (motif) {
     case 'arcade':
@@ -519,11 +909,15 @@ function major(motif: Motif, platform: Platform, edge: Edge, random: () => numbe
     case 'waterfall':
       return waterfall(f, random);
     case 'aqueduct':
-      return aqueduct(f, random, storey);
+      return aqueduct(f, random, storey, platform, campus, spills);
     case 'pavilion':
-      return pavilion(platform, random, storey);
+      return pavilion(f, random, storey);
     case 'pylon':
       return pylon(f, random, storey);
+    case 'drape':
+      return drape(f, random, storey);
+    case 'sail':
+      return sail(f, random, storey);
     default:
       return [];
   }
@@ -570,16 +964,24 @@ function arcade(f: EdgeFrame, random: () => number, storey: number): Piece[] {
 
 /** A hemisphere on a drum, stepped out of flat slices. */
 function dome(f: EdgeFrame, random: () => number, storey: number): Piece[] {
-  // Sized against the floor it has to stand on, not just the edge it sits on:
-  // a dome scaled only to the length of its edge is oversized on any platform
-  // that is long and shallow, and ends up perched half off the rim.
-  const radius = Math.min(1.5, f.along * 0.17, Math.max(0.55, f.room * 0.8));
-  const inset = f.fit(radius * 2, 0.2);
-  // A dome is mass. It stands on the terrace or it is not built here: perched
-  // on the rim it has two and a half units of nothing under it, and the one
-  // thing a heavy object must not do in this office is float.
-  if (inset < 0) return [];
-  const out = -inset;
+  /*
+   * Sized against the deck it has to stand on.
+   *
+   * A dome is mass, and the one thing a heavy object must not do in this office
+   * is float — so it stands entirely on the terrace or it is not built here.
+   * That rule used to be enforced by asking `f.fit`, which it can never pass:
+   * the radius grew with the rim band faster than the band grew, so "a dome
+   * needs 1.4 plus its radius of rim" came out wanting seven units of band on a
+   * campus whose widest is two. Every world fond of domes built none, quietly.
+   *
+   * `f.clear` is the deck the furniture is not using. Half of it is a dome that
+   * stands on the deck by construction, and the occupancy grid — which measures
+   * circulation properly, and is already the arbiter — decides the walking.
+   */
+  const radius = Math.min(1.5, f.along * 0.17, f.clear / 2);
+  // Below this it is a bollard with a spike on it.
+  if (radius < 0.38) return [];
+  const out = f.stand(radius * 2, random() * 0.4) ?? 0;
   const drum = storey * (0.45 + random() * 0.2);
   const offset = (random() - 0.5) * f.along * 0.3;
   const pieces: Piece[] = [
@@ -617,42 +1019,90 @@ function dome(f: EdgeFrame, random: () => number, storey: number): Piece[] {
 
 /** A slender tower: shaft, balcony, shaft, cap. */
 function minaret(f: EdgeFrame, random: () => number, storey: number): Piece[] {
-  const side = 0.62 + random() * 0.2;
-  const inset = f.fit(side, 0.25);
+  const side = 0.78 + random() * 0.26;
   // Same rule as the dome: a tower four units tall standing off the edge of
-  // the terrace has nothing holding it up, and it shows.
-  if (inset < 0) return [];
-  const out = -inset;
+  // the terrace has nothing holding it up, and it shows. So it stands on the
+  // clear deck, or it declines.
+  const base = side * 1.34;
+  const out = f.stand(base, 0.18 + random() * 0.4);
+  if (out === null) return [];
   const offset = (random() < 0.5 ? -1 : 1) * f.along * (0.3 + random() * 0.1);
   const pieces: Piece[] = [];
   let y = 0;
 
+  /*
+   * A plinth, because a tower has to meet the floor somewhere.
+   *
+   * Without it the shaft simply intersects the deck, and at this scale a
+   * vertical stick arriving at a floor plane with no transition reads as
+   * stuck through it rather than standing on it.
+   */
+  pieces.push({ shape: 'box', tone: 'stone', size: [base, 0.34, base], at: f.at(offset, y, out), grad: [0.4, 1] });
+  y += 0.34;
+  pieces.push({ shape: 'box', tone: 'pale', size: [side * 1.14, 0.16, side * 1.14], at: f.at(offset, y, out), grad: [0.7, 1] });
+  y += 0.16;
+
   const lifts = 2 + Math.floor(random() * 2);
   let w = side;
   for (let i = 0; i < lifts; i++) {
-    const tall = storey * (0.85 + random() * 0.4);
+    const tall = storey * (0.72 + random() * 0.34);
+    /*
+     * One stone all the way up, and the storeys told by the galleries.
+     *
+     * The lifts used to alternate pale and dark, which at a distance is not a
+     * tower with floors in it — it is a pole painted in two colours, and the
+     * dark band in the middle of a pale shaft reads as a gap with sky behind
+     * it. A minaret is one piece of masonry; what divides it is where the
+     * balconies are.
+     */
     pieces.push({
       shape: 'box',
-      tone: i % 2 === 0 ? 'pale' : 'stone',
+      tone: 'pale',
       size: [w, tall, w],
       at: f.at(offset, y, out),
-      grad: [0.45, 1],
+      // Each lift a shade lighter than the one below, so the shaft has a sky
+      // to climb toward instead of being flat for nine units.
+      grad: [0.44 + i * 0.1, 1],
     });
     y += tall;
-    // The balcony: a thin disc oversailing the shaft, which is the one detail
-    // that makes a tall thin thing read as a tower rather than a post.
-    pieces.push({
-      shape: 'column',
-      tone: 'stone',
-      radius: w * 1.05,
-      height: 0.14,
-      at: f.at(offset, y, out),
-      grad: [0.82, 1],
-    });
-    y += 0.14;
-    w *= 0.84;
+    /*
+     * The gallery: a corbel, the walkway that oversails it, and a rail.
+     *
+     * A single thin disc was the old version and it is a shelf, not a
+     * balcony — nothing under it and nothing on it. Three courses is the one
+     * detail that makes a tall thin thing read as a tower somebody climbs
+     * rather than as a post somebody planted.
+     */
+    pieces.push(
+      { shape: 'column', tone: 'stone', radius: w * 0.78, height: 0.16, at: f.at(offset, y, out), grad: [0.5, 1] },
+      { shape: 'column', tone: 'stone', radius: w * 1.06, height: 0.15, at: f.at(offset, y + 0.16, out), grad: [0.86, 1] },
+      {
+        shape: 'column',
+        tone: 'pale',
+        radius: w * 1.0,
+        height: 0.26,
+        taper: 0.94,
+        at: f.at(offset, y + 0.31, out),
+        grad: [0.62, 1],
+      },
+    );
+    y += 0.57;
+    w *= 0.86;
   }
-  pieces.push({ shape: 'column', tone: 'pale', radius: w * 0.62, height: w * 1.4, taper: 0.2, at: f.at(offset, y, out), grad: [0.6, 1] });
+  // A neck, then the finial: the cap sat straight on the last gallery and the
+  // tower had no head, only a hat.
+  pieces.push(
+    { shape: 'column', tone: 'pale', radius: w * 0.5, height: w * 0.7, at: f.at(offset, y, out), grad: [0.66, 1] },
+    {
+      shape: 'column',
+      tone: 'pale',
+      radius: w * 0.66,
+      height: w * 1.8,
+      taper: 0.06,
+      at: f.at(offset, y + w * 0.7, out),
+      grad: [0.72, 1],
+    },
+  );
   return pieces;
 }
 
@@ -744,6 +1194,315 @@ function canopy(f: EdgeFrame, random: () => number, storey: number): Piece[] {
 }
 
 /**
+ * A canopy court: cloth slung in bays between a row of posts.
+ *
+ * The office is cut stone all the way through, which is most of why it reads as
+ * one place — and also why it has no give in it anywhere. Cloth is the one
+ * thing in the vocabulary that is not load-bearing: it hangs, it sags, and the
+ * eye reads the curve as weight because nothing else in the frame bends at all.
+ *
+ * The first version of this was too polite to be any of that. One bay, posts
+ * about two thirds of a storey, and a sag of four-tenths of a unit — which at
+ * the size the office is looked less like a canopy than like a towel on a line,
+ * and you had to be told it was there. A gesture this large has to be *large*:
+ * two or three bays across most of the rim, posts over a storey high, and a sag
+ * deep enough that the bottom of the cloth is a curve rather than a line.
+ *
+ * Built as a row of panels rather than a curved surface, because the whole
+ * office is flat-shaded facets and a smoothly-swept cloth would be the one
+ * object in it pretending to be round. The panels step, and at this scale the
+ * steps *are* the fold: it is the same reasoning the corbelled arches use.
+ *
+ * It shelters without enclosing and there is nothing solid above waist height,
+ * so it is also one of the few large gestures that can stand on a furnished
+ * platform without hiding what is on it.
+ */
+const DRAPE_PANELS = 30;
+/**
+ * How many times the cloth swings toward you and back across one bay.
+ *
+ * The whole difference between cloth and a paper cut-out. Every panel used to
+ * hang in the *same plane* — the only depth in the thing was a tenth of a unit
+ * of belly at the lowest point — so a drape was a flat sheet with a curved
+ * hem printed on it, and from any angle but dead square-on it read as a decal
+ * standing on the rim. Two and a half folds is enough to be obviously three
+ * dimensional and few enough that each one is a fold rather than a corrugation.
+ *
+ * It has to stay gentle as well as deep. Two and a half folds across fifteen
+ * panels moved each panel a fifth of a unit in front of its neighbour, which is
+ * wider than a panel — so the curtain came apart into a row of loose slats with
+ * sky between them. Fewer folds over more panels, and a panel thick enough to
+ * overlap the one beside it, is a curtain.
+ *
+ * Saying that and *arithmetic* are two different things, and the first pass
+ * only said it. A panel's thickness was driven by how far the fold had swung,
+ * which puts the thickest panel at the crest — and the crest is exactly where
+ * the cloth is flattest. The thinnest panels landed on the steepest part of
+ * the wave, where the gap to open is widest, so the slats came back. The
+ * thickness is measured now: a panel is as thick as the depth its own width
+ * covers, taken off its neighbours, which is what a slice of a curved surface
+ * is. There is no gap it can open that the measurement does not close.
+ */
+const DRAPE_FOLDS = 1.5;
+
+function drape(f: EdgeFrame, random: () => number, storey: number): Piece[] {
+  const post = 0.26;
+  /*
+   * The posts stand; the cloth is allowed to hang.
+   *
+   * Those are different questions and they were being answered together. A
+   * curtain over the rim is the whole idea, but the thing holding it up is a
+   * quarter-unit square in plan, and placed by the overhang rule it ended up
+   * with two centimetres of itself on the deck — a pin with a curtain on it.
+   * `stand` puts the posts on measured floor; the panels hang from them and
+   * go wherever the sag takes them, which is out over the drop.
+   */
+  const out = f.stand(post, 0.38) ?? -f.fit(post, 0.42);
+  const span = Math.min(f.along * (0.74 + random() * 0.16), 11.5);
+  /*
+   * How many bays the rim will take.
+   *
+   * A short edge with three bays is four posts across it, and at the router's
+   * grid that is a picket fence: the rim comes out impassable and the whole
+   * canopy is thrown away. One wide bay is both more passable and a better
+   * shape for a small room.
+   */
+  const bays = span > 7.4 ? 3 : span > 4.2 ? 2 : 1;
+  const bay = span / bays;
+  const height = storey * (1.06 + random() * 0.3);
+  /*
+   * How far the middle of a bay falls below the line it is slung from.
+   *
+   * A third of the span it crosses, which is what cloth actually does — and
+   * then clamped so the lowest point of the cloth still clears a head. Without
+   * the clamp a wide bay hung to knee height, the router correctly called the
+   * rim impassable, and the whole gesture was thrown away: worlds that were
+   * supposed to have a canopy quietly had nothing. A shallower sag is a far
+   * better answer than no canopy.
+   */
+  const sag = Math.min(bay * (0.3 + random() * 0.12), Math.max(0.35, height - HEAD_CLEARANCE - 0.9));
+  /** How far a fold swings in and out of the plane of the rail. */
+  const swing = Math.min(0.3, Math.max(0.16, bay * 0.06));
+  const pieces: Piece[] = [];
+
+  for (let i = 0; i <= bays; i += 1) {
+    const offset = -span / 2 + i * bay;
+    pieces.push(
+      f.band(post, height, post, offset, 0, out, 'pale', [0.34, 1]),
+      // A capital, and a finial above it, so the post has a top rather than
+      // just stopping.
+      f.band(post * 1.9, 0.18, post * 1.9, offset, height, out, 'stone', [0.72, 1]),
+      // A finial that comes to a point. A cube of accent up there read as an
+      // orange box someone had left on top of the post.
+      {
+        shape: 'column',
+        tone: 'accent',
+        radius: post * 0.44,
+        height: 0.34,
+        taper: 0.2,
+        at: f.at(offset, height + 0.18, out),
+        grad: [0.55, 1],
+      },
+    );
+  }
+
+  const head = height - 0.04;
+  const width = bay / DRAPE_PANELS;
+  const step = 1 / DRAPE_PANELS;
+  /*
+   * The cloth, as two functions of one parameter.
+   *
+   * `t` runs −0.5 at one post to +0.5 at the other. `dipAt` is how far the
+   * cloth has fallen there, `foldAt` how far it has swung toward you — both
+   * pinned to nothing at the posts by the same parabola, because a curtain
+   * cannot billow or sag where it is nailed down. Writing them as functions
+   * rather than inline is what lets the hem be sampled finer than the panels
+   * and still land on the same curve.
+   */
+  const dipAt = (u: number): number => sag * Math.max(0, 1 - 4 * u * u);
+  const foldAt = (u: number): number =>
+    Math.sin((u + 0.5) * Math.PI * 2 * DRAPE_FOLDS) * swing * Math.max(0, 1 - 4 * u * u);
+
+  for (let b = 0; b < bays; b += 1) {
+    const centre = -span / 2 + (b + 0.5) * bay;
+    // A head rail across the bay, which is the thing the cloth hangs from.
+    pieces.push(f.band(bay, 0.12, post * 0.8, centre, head, out, 'stone', [0.8, 1]));
+
+    for (let i = 0; i < DRAPE_PANELS; i += 1) {
+      const t = (i + 0.5) / DRAPE_PANELS - 0.5;
+      const dip = dipAt(t);
+      const drop = 0.5 + dip;
+      const fold = foldAt(t);
+      const belly = out - dip * 0.1 + fold;
+      /*
+       * As thick as the depth this panel's own width covers.
+       *
+       * Measured off its neighbours rather than guessed from the wave: a slice
+       * of a curved surface is exactly as deep as the surface moves across it,
+       * and a slice built that way cannot leave a gap for the one beside it to
+       * show through. The addition is the cloth's own body. It also means the
+       * resolution is free — double the panels and every one of them halves,
+       * still overlapping — which is what lets the count be chosen for the
+       * smoothness of the hem rather than for the tightness of the weave.
+       */
+      const reach = Math.max(Math.abs(foldAt(t + step) - fold), Math.abs(fold - foldAt(t - step)));
+      const thick = 0.15 + reach * 1.3;
+      // Overlapped along the rail as well, so the joints between panels are
+      // inside the cloth rather than on its face.
+      pieces.push(
+        f.band(width * 1.4, drop, thick, centre + t * bay, head - drop, belly, 'pale', [0.12, 1]),
+        /*
+         * The hem: one band per panel, taller than the step between panels.
+         *
+         * The sag is a parabola, so near the posts the bottom of the cloth
+         * falls fastest, and a hem shorter than that fall comes apart into a
+         * row of separate blocks — the jagged orange staircase this had. At
+         * thirty panels the steepest step is a fifth of a unit and the band is
+         * a quarter, so consecutive blocks always overlap and the silhouette
+         * is a continuous scallop. It reaches up into the cloth as well, so
+         * there is never a slot of sky between a curtain and its own hem.
+         */
+        f.band(
+          width * 1.4,
+          0.26,
+          thick + 0.06,
+          centre + t * bay,
+          head - drop - 0.2,
+          belly,
+          'accent',
+          [0.5, 1],
+        ),
+      );
+      /*
+       * A pelmet over the head of the cloth, shallower and folded the other
+       * way, so the top of the curtain has a thickness too.
+       */
+      const shade = dip * 0.3 + 0.16;
+      pieces.push(
+        f.band(width * 1.4, shade, thick + 0.1, centre + t * bay, head - shade, belly - fold * 0.55, 'pale', [0.42, 0.9]),
+      );
+    }
+  }
+
+  /*
+   * And a return round each end post.
+   *
+   * The one detail that cannot be faked with a sagging hem: a curtain that
+   * stops dead at its last panel is a sheet of card seen edge on, and a
+   * curtain that turns the corner is unmistakably a thing in a room. Three
+   * short panels each, running *across* the rim instead of along it.
+   */
+  const returns = 3;
+  for (const side of [-1, 1]) {
+    const at = (side * span) / 2;
+    for (let i = 0; i < returns; i += 1) {
+      const t = (i + 0.5) / returns;
+      const deep = 0.34 + t * 0.5;
+      const drop = 0.5 + sag * 0.5 * (1 - t) + 0.12;
+      pieces.push(
+        f.band(0.1 + (1 - t) * 0.06, drop, 0.42, at, head - drop, out - deep, 'pale', [0.2, 1]),
+        f.band(0.15, 0.14, 0.46, at, head - drop - 0.11, out - deep, 'accent', [0.5, 1]),
+      );
+    }
+  }
+
+  return pieces;
+}
+
+/**
+ * A sail: cloth stretched flat between four posts and sagging under its own
+ * weight.
+ *
+ * The other thing cloth does. A drape is a *wall* of it and reads as a screen
+ * you can see past; this is a *roof* of it, and reads as shade. A sagging
+ * horizontal sheet is a silhouette the office has nowhere else and cannot make
+ * out of stone, and having two cloth gestures rather than one is what stops
+ * "the soft thing" being a single object you recognise on sight.
+ *
+ * It began as an awning sloping out over the drop, which is the obvious shape
+ * and is not buildable here: a plane that starts on the deck and ends below it
+ * crosses deck height *somewhere past the rim*, and a piece out there with
+ * clear sky above and below it is the "balloon moored beside the office" the
+ * layout invariant exists to catch. Bracketing every rib would be a lot of
+ * carpentry in aid of hiding a shape that was wrong anyway. Four posts on the
+ * deck and the cloth between them is the honest version, and it is the better
+ * silhouette: you see the campus *through* the sag.
+ */
+const SAIL_ACROSS = 9;
+const SAIL_DEEP = 5;
+
+function sail(f: EdgeFrame, random: () => number, storey: number): Piece[] {
+  const post = 0.22;
+  const near = f.stand(post, 0);
+  if (near === null) return [];
+  const span = Math.min(f.along * (0.52 + random() * 0.2), 8.5);
+  /*
+   * How far in the back posts go.
+   *
+   * Bounded by the *actual* clear deck, because a sail whose back posts land in
+   * the middle of the library shelves is a sail that gets thrown away. That
+   * used to be spelled `f.room < 1.5`, which is a guess about the furniture
+   * rather than a measurement of it, and it happened to be a guess no platform
+   * the generator makes could satisfy. `f.clear` asks the prop what it needs
+   * kept free and takes the rest.
+   */
+  const deep = Math.min(f.clear - post, 4.6);
+  // A sheet shallower than this is a pelmet, and the sag has nowhere to go.
+  if (deep < 0.95) return [];
+  const height = storey * (1.08 + random() * 0.2);
+  // How far the middle of the sheet falls. Cloth, so: a lot — but never so
+  // far that you could not walk under it; see `drape`.
+  const sag = Math.min(
+    Math.min(span, deep) * (0.17 + random() * 0.07),
+    Math.max(0.3, height - HEAD_CLEARANCE - 0.55),
+  );
+  const pieces: Piece[] = [];
+
+  const far = near - deep;
+
+  for (const offset of [-span / 2, span / 2]) {
+    for (const out of [near, far]) {
+      pieces.push(
+        f.band(post, height, post, offset, 0, out, 'pale', [0.34, 1]),
+        f.band(post * 1.8, 0.16, post * 1.8, offset, height, out, 'stone', [0.72, 1]),
+      );
+    }
+  }
+
+  /*
+   * The sheet, as a grid of flat panels.
+   *
+   * Stepped rather than swept, like every other soft thing here: the office is
+   * flat-shaded facets and a smoothly-curved sail would be the one object in
+   * it pretending to be round. At this size the steps read as the quilting.
+   */
+  const cell = span / SAIL_ACROSS;
+  const rank = deep / SAIL_DEEP;
+  for (let i = 0; i < SAIL_ACROSS; i += 1) {
+    const u = (i + 0.5) / SAIL_ACROSS - 0.5;
+    for (let j = 0; j < SAIL_DEEP; j += 1) {
+      const v = (j + 0.5) / SAIL_DEEP - 0.5;
+      // A parabola in both directions: taut at the posts, deepest in the middle.
+      const dip = sag * (1 - 4 * u * u) * (1 - 4 * v * v);
+      const out = near - (j + 0.5) * rank;
+      pieces.push(f.band(cell * 1.04, 0.1, rank * 1.04, u * span, height - 0.08 - dip, out, 'pale', [0.7, 1]));
+    }
+  }
+
+  // A weighted edge along the two free sides, which is what makes the sag read
+  // as cloth under load rather than as a dented lid.
+  for (let i = 0; i < SAIL_ACROSS; i += 1) {
+    const u = (i + 0.5) / SAIL_ACROSS - 0.5;
+    const dip = sag * (1 - 4 * u * u) * 0.75;
+    for (const out of [near - rank * 0.2, far + rank * 0.2]) {
+      pieces.push(f.band(cell * 1.08, 0.17, 0.14, u * span, height - 0.2 - dip, out, 'accent', [0.5, 1]));
+    }
+  }
+
+  return pieces;
+}
+
+/**
  * A square tower, rising in setbacks under a stepped roof.
  *
  * The minaret is round, slender and all silhouette; this is its opposite
@@ -753,11 +1512,10 @@ function canopy(f: EdgeFrame, random: () => number, storey: number): Piece[] {
  */
 function tower(f: EdgeFrame, random: () => number, storey: number): Piece[] {
   const base = 1.0 + random() * 0.35;
-  const inset = f.fit(base, 0.2);
   // Mass stands on the terrace or it is not built, the same rule the dome and
   // the minaret answer to.
-  if (inset < 0) return [];
-  const out = -inset;
+  const out = f.stand(base, random() * 0.45);
+  if (out === null) return [];
   const offset = (random() < 0.5 ? -1 : 1) * f.along * (0.22 + random() * 0.12);
 
   const pieces: Piece[] = [];
@@ -784,18 +1542,41 @@ function tower(f: EdgeFrame, random: () => number, storey: number): Piece[] {
 
 /** Wide shallow steps running down off the rim, like a bathing ghat. */
 function ghat(f: EdgeFrame, random: () => number): Piece[] {
-  const span = f.along * (0.5 + random() * 0.26);
+  /*
+   * It runs down the *face* of the terrace, not out away from it.
+   *
+   * Each course used to step a full tread further from the rim as well as a
+   * riser down, so after six of them the flight was a staircase hanging two and
+   * a half units out in clear air with nothing under it — and because each
+   * course was also cut shorter than the last, from across the campus the whole
+   * thing read as a dotted line trailing off a corner. A ghat descends against
+   * the thing it is cut into. Here that is the rock under the terrace, so the
+   * courses hug the rim and corbel out a little as they go, the way a stepped
+   * buttress does.
+   */
+  const span = f.along * (0.46 + random() * 0.22);
   const pieces: Piece[] = [];
-  const steps = 4 + Math.floor(random() * 4);
-  let out = 0.1;
-  let y = 0;
+  const steps = 5 + Math.floor(random() * 4);
+  const thick = 0.55;
+  /*
+   * Straddling the rim, and starting a finger *below* the floor.
+   *
+   * Pulling the flight inboard put the top course's upward face on exactly the
+   * platform's own floor plane, in a different stone — which `coplanar.test.ts`
+   * caught immediately, and which would have been a patch of flicker on the
+   * deck of every ghat in the office. The first course belongs under the slab;
+   * what you see of the flight starts at the rim and goes down.
+   */
+  let out = thick * 0.42;
+  let y = -0.05;
 
   for (let i = 0; i < steps; i++) {
-    const tread = 0.42 + random() * 0.16;
     const rise = 0.3 + random() * 0.1;
     y -= rise;
-    out += tread;
-    pieces.push(f.band(span - i * 0.35, rise, tread, 0, y, out - tread / 2, i % 2 === 0 ? 'stone' : 'pale', [0.4, 1]));
+    pieces.push(f.band(span - i * 0.14, rise, thick, 0, y, out, i % 2 === 0 ? 'stone' : 'pale', [0.4, 1]));
+    // A finger further out each course, so the flight widens downward and the
+    // face of every step is visible from above.
+    out += 0.1 + random() * 0.05;
   }
   return pieces;
 }
@@ -835,9 +1616,40 @@ function screen(f: EdgeFrame, random: () => number, storey: number): Piece[] {
  * what makes it worth having. A campus of temples and terraces reads as a
  * monument; one aqueduct in it reads as a place people live.
  */
-function aqueduct(f: EdgeFrame, random: () => number, storey: number): Piece[] {
-  const bays = 3 + Math.floor(random() * 2);
-  const bay = 1.5 + random() * 0.5;
+function aqueduct(
+  f: EdgeFrame,
+  random: () => number,
+  storey: number,
+  platform: Platform,
+  campus: Campus,
+  spills: Spill[],
+): Piece[] {
+  /*
+   * Long enough to reach the terrace it is pointing at, if there is one.
+   *
+   * An aqueduct that tips its water into the void is a fine object and a
+   * slightly pointless one — it was built to get water from somewhere to
+   * somewhere, and half of that sentence was missing. When there is a lower
+   * deck out past this rim, the run is cut to land on it, and the water
+   * arrives: a fall, and a pool spreading where it hits. That is the whole
+   * reason this motif is in the vocabulary rather than another colonnade.
+   *
+   * It is still only *if*. Most rims face open sky, and an aqueduct emptying
+   * into the fog is what the rest of them do.
+   */
+  let bays = 3 + Math.floor(random() * 2);
+  let bay = 1.5 + random() * 0.5;
+  const target = reachableDeck(f, platform, campus);
+  if (target !== null) {
+    for (const count of [4, 3, 5, 6]) {
+      const want = (target - f.fit(1.1, 0.5) * -1 - 0.4) / count;
+      if (want >= 1.3 && want <= 2.3) {
+        bays = count;
+        bay = want;
+        break;
+      }
+    }
+  }
   const span = bays * bay;
   const wide = 1.15;
   const deck = storey * (0.35 + random() * 0.12);
@@ -901,11 +1713,211 @@ function aqueduct(f: EdgeFrame, random: () => number, storey: number): Piece[] {
     f.band(wide * 0.56, 0.12, length - 0.3, 0, deck + 0.5, middle, 'water', [0.96, 1]),
   );
 
-  // And the spill off the far end.
-  const fall = 15 + random() * 6;
-  pieces.push(f.band(wide * 0.56, fall, 0.36, 0, deck + 0.4 - fall, to, 'water', [0.94, 1]));
+  /*
+   * And the spill off the far end — recorded, not built.
+   *
+   * It used to be one box fifteen to twenty units tall, which did two things
+   * wrong at once. It never thinned out, so it ended in a horizontal line the
+   * way no falling water ever does — the waterfall learned that lesson several
+   * rounds ago and this never got the fix. And it went straight through
+   * whatever happened to be under it, because nothing here knows what is. Both
+   * are answered in `resolveSpills`, once the whole campus exists.
+   */
+  spills.push({
+    platformId: platform.id,
+    at: f.at(0, deck + 0.4, to),
+    width: wide * 0.56,
+    horizontal: f.horizontal,
+  });
 
   return pieces;
+}
+
+/**
+ * Everything a falling stream could land on, in world coordinates.
+ *
+ * Platform decks and the tops of other aqueducts' channels: the two flat things
+ * in this office that water could plausibly arrive on. Gathered once, because
+ * the answer is the same for every spill and the campus does not move.
+ */
+interface Shelf {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  y: number;
+}
+
+/**
+ * Where each aqueduct's water actually goes.
+ *
+ * Two outcomes, and the office is better for having both. If there is a deck or
+ * another channel under the lip, the water *lands*: the fall stops there and
+ * spreads into a pool, which is the one thing in the whole campus that says two
+ * of these terraces are part of the same waterworks. If there is nothing under
+ * it, it falls into the void and dissolves, the way the waterfalls do.
+ *
+ * Built into the *source* platform's piece list even when it lands on another
+ * one. A piece is drawn at its platform's position plus its own offset, so an
+ * offset can reach anywhere; and keeping the whole gesture in one place means
+ * an aqueduct is still one object that can be read, moved or dropped whole.
+ */
+function resolveSpills(
+  spills: readonly Spill[],
+  campus: Campus,
+  onPlatform: Map<string, Piece[]>,
+  random: () => number,
+): void {
+  if (spills.length === 0) return;
+  const byId = new Map(campus.platforms.map((platform) => [platform.id, platform]));
+
+  const shelves: Shelf[] = campus.platforms.map((platform) => ({
+    minX: platform.position[0] - platform.size[0] / 2,
+    maxX: platform.position[0] + platform.size[0] / 2,
+    minZ: platform.position[1] - platform.size[1] / 2,
+    maxZ: platform.position[1] + platform.size[1] / 2,
+    y: levelY(platform.level),
+  }));
+  // Other channels count too: an aqueduct emptying into an aqueduct is the
+  // edge case this started from, and it is a better picture than either of the
+  // two things it used to do.
+  for (const spill of spills) {
+    const host = byId.get(spill.platformId);
+    if (!host) continue;
+    const x = host.position[0] + spill.at[0];
+    const z = host.position[1] + spill.at[2];
+    const half = spill.width * 1.4;
+    shelves.push({ minX: x - half, maxX: x + half, minZ: z - half, maxZ: z + half, y: levelY(host.level) + spill.at[1] });
+  }
+
+  for (const spill of spills) {
+    const host = byId.get(spill.platformId);
+    if (!host) continue;
+    const base = levelY(host.level);
+    const x = host.position[0] + spill.at[0];
+    const z = host.position[1] + spill.at[2];
+    const lip = base + spill.at[1];
+
+    let landing: number | null = null;
+    for (const shelf of shelves) {
+      // Far enough below to be a fall rather than a seam. Under that and the
+      // water arrives before it has had room to look like it is falling.
+      if (shelf.y > lip - 2.6) continue;
+      if (x < shelf.minX || x > shelf.maxX || z < shelf.minZ || z > shelf.maxZ) continue;
+      if (landing === null || shelf.y > landing) landing = shelf.y;
+    }
+
+    const pieces = onPlatform.get(spill.platformId) ?? [];
+    const local = (worldY: number): number => worldY - base;
+    pieces.push(...fallFrom(spill, local(lip), landing === null ? null : local(landing), random));
+    onPlatform.set(spill.platformId, pieces);
+  }
+}
+
+/**
+ * The stream itself, in the source platform's local frame.
+ *
+ * Staged and narrowing, like a waterfall's sheets, for the same reason: a
+ * single long box is a pane of glass with two hard vertical edges, and water
+ * necks in as it falls. What differs is the end. A fall into the void keeps
+ * dissolving until there is nothing of it; a fall that lands holds its colour
+ * all the way down and then stops, because you can see where it stops.
+ */
+function fallFrom(spill: Spill, lipY: number, landY: number | null, random: () => number): Piece[] {
+  const pieces: Piece[] = [];
+  const [x, , z] = spill.at;
+  const long = spill.horizontal ? spill.width : 0.36;
+  const deep = spill.horizontal ? 0.36 : spill.width;
+
+  const drop = landY === null ? 17 + random() * 5 : lipY - landY;
+  const stages = Math.max(4, Math.min(9, Math.round(drop / 2.4)));
+  let y = lipY;
+  let span = 1;
+  let wander = 0;
+  for (let i = 0; i < stages; i += 1) {
+    const t = stages === 1 ? 1 : i / (stages - 1);
+    const tall = drop / stages;
+    y -= tall;
+    /*
+     * A fall into the void thins into the sky; one that lands does not.
+     *
+     * The fade is the whole difference between the two readings. Dissolving on
+     * the way down says "this goes on past the bottom of the world", which is
+     * true of the first and a lie about the second — and a stream that arrives
+     * at a pool already half sky reads as a stain on the platform rather than
+     * as water hitting it.
+     */
+    const fade = landY === null ? Math.min(0.97, Math.pow(t, 1.7) * 1.05) : 0;
+    pieces.push({
+      shape: 'box',
+      tone: 'water',
+      size: [long * span, tall + 0.06, deep * span],
+      at: [x + wander, y, z],
+      grad: [0.94, 1],
+      ...(fade > 0 ? { fade } : {}),
+    });
+    span *= 0.93 + random() * 0.05;
+    wander += (random() - 0.5) * 0.12;
+  }
+
+  if (landY === null) return pieces;
+
+  /*
+   * And the pool it makes.
+   *
+   * Three rings, each wider and thinner than the last, which is the same
+   * stepped trick the ripple under the pedestal uses — at this size a smooth
+   * disc is not available and a stepped one reads as spreading water anyway.
+   * Low enough that the occupancy grid ignores it (`FLOOR_CLEARANCE`), because
+   * a puddle is not a wall and nobody should have to walk round it.
+   */
+  const spread = spill.width * (2.1 + random() * 0.9);
+  for (let i = 0; i < 3; i += 1) {
+    const t = i / 2;
+    const side = spill.width * 0.8 + (spread - spill.width * 0.8) * t;
+    pieces.push({
+      shape: 'box',
+      tone: 'water',
+      size: [side, 0.07 - t * 0.016, side],
+      at: [x + wander, landY + 0.01, z],
+      grad: [0.97, 1],
+    });
+  }
+  return pieces;
+}
+
+/**
+ * How far out past this rim a lower deck begins, or null.
+ *
+ * Measured along the edge's own normal from the platform's middle, so the
+ * answer is in the same units `fit` and `band` take. "Lower" means at least a
+ * flight down: level with this one is a bridge, not a fall, and the water would
+ * arrive without ever having looked like it was falling.
+ */
+function reachableDeck(f: EdgeFrame, platform: Platform, campus: Campus): number | null {
+  const here = levelY(platform.level);
+  const half = f.horizontal ? platform.size[1] / 2 : platform.size[0] / 2;
+  let best: number | null = null;
+  for (const other of campus.platforms) {
+    if (other.id === platform.id || other.over) continue;
+    if (levelY(other.level) > here - 2.6) continue;
+    // Square on: the channel runs straight out, so the target has to be in
+    // front of this rim rather than off to one side of it.
+    const alongHere = f.horizontal ? platform.position[0] : platform.position[1];
+    const alongThere = f.horizontal ? other.position[0] : other.position[1];
+    const alongHalf = f.horizontal ? other.size[0] / 2 : other.size[1] / 2;
+    if (Math.abs(alongThere - alongHere) > alongHalf + 0.5) continue;
+
+    const outHere = f.horizontal ? platform.position[1] : platform.position[0];
+    const outThere = f.horizontal ? other.position[1] : other.position[0];
+    const sign = f.horizontal ? f.normal[1] : f.normal[0];
+    const outHalf = f.horizontal ? other.size[1] / 2 : other.size[0] / 2;
+    // Distance from this rim to a point comfortably inside the far deck.
+    const reach = (outThere - outHere) * sign - half + outHalf * 0.45;
+    if (reach < 2.5 || reach > 14) continue;
+    if (best === null || reach < best) best = reach;
+  }
+  return best;
 }
 
 /**
@@ -981,40 +1993,112 @@ function waterfall(f: EdgeFrame, random: () => number): Piece[] {
      * can put one on: a fall that stops short ends in a horizontal line, and
      * there is no such thing as the bottom edge of a waterfall.
      */
+    /*
+     * And it dissolves as it goes, rather than ending.
+     *
+     * Three long boxes reached the bottom of the window at full strength and
+     * stopped dead on the window edge — the one silhouette a waterfall must
+     * never have. Leaving it to the void fade does not work either: that plane
+     * is set from the lowest *floor* in the campus and a fall starts under one
+     * and keeps going, so most of the drop is below anything the fade is aimed
+     * at. Water has to thin out because it is falling.
+     *
+     * So: more stages, each a step further toward the colour of the sky behind
+     * it, with the steps bunched at the bottom where the change has to happen
+     * fastest. The banding that would give a smooth surface is exactly the
+     * stepping every other soft thing in this office is made of — the drape
+     * folds, the corbelled arches — and at the width of a falling sheet it
+     * reads as spray rather than as courses.
+     */
+    const stages = 7;
     let y = -0.2;
     let wander = offset;
-    for (let stage = 0; stage < 3; stage++) {
-      const drop = (stage === 2 ? 13 : 3 + random() * 2.5) + random() * 2;
-      pieces.push(f.band(span, drop, 0.34, wander, y - drop, reach, 'water', [0.94, 1]));
+    for (let stage = 0; stage < stages; stage++) {
+      const t = stage / (stages - 1);
+      // Short at the lip and longer as it goes, so the fall accelerates.
+      const drop = 1.4 + t * 5.5 + random() * 1.6;
+      // Held near full for the first third and then gone quickly.
+      const fade = Math.min(0.97, Math.pow(t, 1.7) * 1.05);
+      pieces.push(f.band(span, drop, 0.34, wander, y - drop, reach, 'water', [0.94, 1], fade));
       y -= drop;
-      span *= 0.74 + random() * 0.12;
-      wander += (random() - 0.5) * wide * 0.16;
+      span *= 0.88 + random() * 0.07;
+      wander += (random() - 0.5) * wide * 0.1;
     }
   }
 
   return pieces;
 }
 
-/** Four columns and a flat roof: a room's worth of shade, standing free. */
-function pavilion(platform: Platform, random: () => number, storey: number): Piece[] {
-  const [width, depth] = platform.size;
-  const ring = walkableRing(platform);
-  const radius = 0.16;
-  const insetX = ring[0] - CLEARANCE - BODY - radius;
-  const insetZ = ring[1] - CLEARANCE - BODY - radius;
-  if (insetX < 0 || insetZ < 0) return [];
-
-  const height = storey * (0.72 + random() * 0.2);
-  const x = width / 2 - Math.min(0.5, insetX);
-  const z = depth / 2 - Math.min(0.5, insetZ);
+/**
+ * A pavilion: a plinth, four columns and a hipped roof — a building, not a lid.
+ *
+ * A canopy shelters and a pavilion *encloses*, and the difference is meant to
+ * be legible from across the campus: this one has a floor you step up onto, a
+ * proper order of column, and a roof that comes to a ridge.
+ *
+ * It used to be four thin posts at the corners of the *whole* platform under a
+ * roof spanning the lot, which had two problems. It never once got built — its
+ * corner inset came out of the same rim-band budget the dome was starving on —
+ * and had it been built it would have put a lid over the zone, hiding the very
+ * furniture the office exists to show. So it takes one edge, like every other
+ * gesture, and stands a bay on the clear deck there: you see it side-on against
+ * the sky, you see the zone working beside it, and you can see daylight through
+ * it between the columns.
+ */
+function pavilion(f: EdgeFrame, random: () => number, storey: number): Piece[] {
+  const column = 0.3;
+  const near = f.stand(column, 0);
+  const deep = Math.min(f.clear - column, 3.4);
+  // Narrower than this and the two ranks of columns are one rank; a pavilion
+  // you cannot see through is a wall with a hat on.
+  if (near === null || deep < 1.15) return [];
+  const span = Math.min(f.along * (0.42 + random() * 0.16), Math.max(deep * 1.6, 5.4));
+  const height = storey * (0.86 + random() * 0.22);
+  const plinth = 0.26;
+  const far = near - deep;
+  const mid = near - deep / 2;
   const pieces: Piece[] = [];
 
-  for (const sx of [-1, 1]) {
-    for (const sz of [-1, 1]) {
-      pieces.push({ shape: 'column', tone: 'pale', radius, height, at: [sx * x, 0, sz * z], grad: [0.45, 1] });
+  // The plinth, in two courses so the building sits on something rather than
+  // starting out of the floor. A hair wider than the columns stand, which is
+  // what reads as a step.
+  pieces.push(
+    f.band(span + column * 3.4, plinth * 0.55, deep + column * 3.4, 0, 0, mid, 'stone', [0.4, 0.82]),
+    f.band(span + column * 2.2, plinth * 0.55, deep + column * 2.2, 0, plinth * 0.55, mid, 'pale', [0.62, 1]),
+  );
+
+  // Four columns, each with a base and a capital. The bands at either end are
+  // most of what separates a column from a post.
+  for (const offset of [-span / 2, span / 2]) {
+    for (const out of [near, far]) {
+      pieces.push(
+        f.band(column * 1.34, 0.14, column * 1.34, offset, plinth, out, 'stone', [0.5, 0.92]),
+        { shape: 'column', tone: 'pale', radius: column / 2, height, at: f.at(offset, plinth + 0.14, out), grad: [0.4, 1] },
+        f.band(column * 1.5, 0.18, column * 1.5, offset, plinth + 0.14 + height, out, 'stone', [0.74, 1]),
+      );
     }
   }
-  pieces.push(...roof(0, height, 0, 2 * x + 1.1, 2 * z + 1.1, random));
+
+  // An architrave tying the columns together, then the roof on top of it. A
+  // roof resting straight on four capitals looks balanced there; a beam under
+  // it looks built.
+  const head = plinth + 0.32 + height;
+  pieces.push(
+    f.band(span + column * 1.5, 0.2, column, 0, head, near, 'stone', [0.66, 1]),
+    f.band(span + column * 1.5, 0.2, column, 0, head, far, 'stone', [0.66, 1]),
+  );
+
+  const [cx, , cz] = f.at(0, 0, mid);
+  pieces.push(
+    ...roof(
+      cx,
+      head + 0.2,
+      cz,
+      f.horizontal ? span : deep,
+      f.horizontal ? deep : span,
+      random,
+    ),
+  );
   return pieces;
 }
 
@@ -1103,6 +2187,25 @@ function pylon(f: EdgeFrame, random: () => number, storey: number): Piece[] {
 
 // ---------- the small ones ----------
 
+/**
+ * The small things, and why every one of them now asks `stand`.
+ *
+ * These used to be placed with `fit`, which is the budget that lets a piece
+ * overhang the rim when the walkable ring is too narrow to hold it — and it
+ * nearly always is. For a balustrade that is right: it is a long thin band,
+ * a sliver of it keeps a foot on the terrace, and it reads as attached
+ * because it runs the length of the edge. For a *point* it is a disaster. A
+ * lamp post 0.18 across, placed by that same rule, ends up with eight
+ * millimetres of itself over the deck and the rest over the drop, and in an
+ * isometric view its foot lands exactly on the platform's silhouette. There
+ * is then nothing in the picture to say it is standing on anything, and the
+ * report was the plain one: the pins are floating.
+ *
+ * So anything with a footprint rather than a length stands on measured deck
+ * or is not built. The occupancy check downstream can still drop it if the
+ * two of them together seal the walkway; an accent is the first thing it is
+ * allowed to take.
+ */
 function minor(kind: Accentpiece, platform: Platform, edge: Edge, random: () => number): Piece[] {
   if (kind === 'none') return [];
   const f = frameFor(platform, edge);
@@ -1110,7 +2213,8 @@ function minor(kind: Accentpiece, platform: Platform, edge: Edge, random: () => 
   if (kind === 'pool') {
     // A still sheet of water at the rim, with a thin lip. Half of why the
     // waterfalls read: water belongs to this place, not just to its edges.
-    const out = -f.fit(1.1, 0.2);
+    const out = f.stand(1.24, 0.12);
+    if (out === null) return [];
     const span = f.along * (0.3 + random() * 0.2);
     return [
       f.band(span + 0.24, 0.12, 1.24, 0, 0, out, 'stone', [0.6, 1]),
@@ -1119,7 +2223,8 @@ function minor(kind: Accentpiece, platform: Platform, edge: Edge, random: () => 
   }
 
   if (kind === 'planter') {
-    const out = -f.fit(0.9, 0.25);
+    const out = f.stand(0.9, 0.2);
+    if (out === null) return [];
     const offset = (random() < 0.5 ? -1 : 1) * f.along * 0.24;
     return [
       f.band(0.9, 0.3, 0.9, offset, 0, out, 'stone', [0.55, 1]),
@@ -1135,14 +2240,28 @@ function minor(kind: Accentpiece, platform: Platform, edge: Edge, random: () => 
     ];
   }
 
-  // A lantern: a slim post with a lit head. The one thing in the vocabulary
-  // that carries the accent colour, and the only thing that reads at night.
-  const out = -f.fit(0.24, 0.2);
+  // A lantern: a slim post on a plinth, with a lit head. The one thing in the
+  // vocabulary that carries the accent colour, and the only thing that reads
+  // at night. The plinth is not decoration — it is the part of it that is
+  // visibly standing on the floor, and a post without one is a pin.
+  const FOOT = 0.54;
+  const out = f.stand(FOOT, 0.3);
+  if (out === null) return [];
   const offset = (random() - 0.5) * f.along * 0.5;
+  const base = 0.16;
   const post = 1.1 + random() * 0.6;
   return [
-    { shape: 'column', tone: 'pale', radius: 0.09, height: post, at: f.at(offset, 0, out), grad: [0.5, 1] },
-    { shape: 'column', tone: 'accent', radius: 0.17, height: 0.3, taper: 0.6, at: f.at(offset, post, out), grad: [0.8, 1] },
+    f.band(FOOT, base, FOOT, offset, 0, out, 'stone', [0.45, 1]),
+    { shape: 'column', tone: 'pale', radius: 0.1, height: post, at: f.at(offset, base, out), grad: [0.5, 1] },
+    {
+      shape: 'column',
+      tone: 'accent',
+      radius: 0.18,
+      height: 0.3,
+      taper: 0.6,
+      at: f.at(offset, base + post, out),
+      grad: [0.8, 1],
+    },
   ];
 }
 
@@ -1415,20 +2534,56 @@ function rockKind(random: () => number): RockKind {
   return 'none';
 }
 
+/**
+ * How wide the rock still is, a given fraction of the way down it.
+ *
+ * The profile, as a curve, rather than a shrink factor applied per course —
+ * and that is the whole of the fix. A ratio per course means the taper depends
+ * on how many courses the dice gave: a sheer face takes three of them at 0.97
+ * and comes out 91% as wide at the bottom as at the top, which is not a cliff,
+ * it is a column with a lid on it. Worse, the last course always took whatever
+ * height was left as one block, so whatever tapering had happened stopped dead
+ * and the rock finished as a straight shaft hanging in the fog.
+ *
+ * Asking the curve instead means every rock arrives at the same place however
+ * it was cut: about a tenth of its top width, necking away to nothing. The
+ * three characters differ in *where* along the drop they spend it — a cliff
+ * holds its width and then falls away, a stalk necks immediately, stepped does
+ * it evenly — which is the difference that was supposed to be there and was
+ * being spent on the wrong axis.
+ */
+function rockProfile(kind: RockKind, t: number): number {
+  const u = Math.min(1, Math.max(0, t));
+  /*
+   * The exponents are chosen for where the *visible* part of the rock is.
+   *
+   * Only about the top two thirds of a keel is above the plane that dissolves
+   * into sky, so a curve that does all its narrowing in the last third is a
+   * curve that, on screen, does not narrow at all — which is how a profile
+   * that was correct on paper still shipped as a set of columns. These reach
+   * roughly half width by halfway down and then fall away, so the taper is
+   * something you can see and the point it comes to is something the fog
+   * finishes rather than hides.
+   */
+  const shape = kind === 'sheer' ? Math.pow(u, 1.7) : kind === 'stalk' ? Math.pow(u, 0.5) : u * u * (3 - 2 * u);
+  return 1 - 0.94 * shape;
+}
+
 function substructure(platform: Platform, random: () => number, bedrock: number): Piece[] {
   const [width, depth] = platform.size;
   const reach = Math.max(1.2, levelY(platform.level) - bedrock);
   const kind = rockKind(random);
   // Nothing at all: the terrace simply ends, and the campus gets some air in it.
   if (kind === 'none') return [];
-  // A sheer face wants few, tall courses; a stalk wants many, so it can neck
-  // down convincingly instead of jumping to a point in two jumps.
-  const steps =
-    kind === 'sheer'
-      ? Math.max(2, Math.min(3, 1 + Math.round(reach / 6)))
-      : kind === 'stalk'
-        ? Math.max(4, Math.min(7, 3 + Math.round(reach / 2.6)))
-        : Math.max(3, Math.min(6, 2 + Math.round(reach / 3.4)));
+  /*
+   * Enough courses to cut the curve, and more of them than there used to be.
+   *
+   * A taper read off a profile is only as smooth as the number of steps you
+   * cut it in, and three steps over twenty units is not a taper, it is a
+   * wedding cake. These are cheap — one box each, in a mesh that is merged
+   * anyway — and the top ones are what anybody actually sees.
+   */
+  const steps = Math.max(5, Math.min(11, Math.round(reach / (kind === 'sheer' ? 3.2 : 2.3))));
   const pieces: Piece[] = [];
 
   /**
@@ -1443,43 +2598,54 @@ function substructure(platform: Platform, random: () => number, bedrock: number)
   const lean: [number, number] = [random() - 0.5, random() - 0.5];
   // A sheer cliff barely leans — that is what makes it read as sheer.
   const bite = (0.55 + random() * 0.5) * (kind === 'sheer' ? 0.25 : 1);
+  const top: [number, number] = [width * (kind === 'sheer' ? 0.98 : 0.92), depth * (kind === 'sheer' ? 0.98 : 0.92)];
 
-  let w = width * (kind === 'sheer' ? 0.98 : 0.92);
-  let d = depth * (kind === 'sheer' ? 0.98 : 0.92);
   let x = 0;
   let z = 0;
   let y = -0.55;
-  let left = reach;
+  let w = top[0];
+  let d = top[1];
 
   for (let i = 0; i < steps; i++) {
-    // Each course takes a shrinking share of what is left, so the visible top
-    // of the rock is finely cut and the invisible bottom is one long block.
-    const tall = i === steps - 1 ? left : Math.min(left - 0.4, 0.9 + random() * 1.3 + i * 0.6);
-    const shade = i / Math.max(1, steps - 1);
-    // How hard each course cuts in, which is the whole difference between the
-    // three: a cliff holds its width, a stalk necks away to a shaft.
-    const [base, spread] = kind === 'sheer' ? [0.97, 0.03] : kind === 'stalk' ? [0.72, 0.1] : [0.86, 0.08];
-    const shrinkX = base - random() * spread;
-    const shrinkZ = base - random() * spread;
-
+    /*
+     * Courses get taller as they go down, so the visible top of the rock is
+     * finely cut and the part inside the fog is not cut at all. The weights
+     * sum to `reach` by construction, which is what keeps every rock in the
+     * campus ending on the same plane however many courses it was given.
+     *
+     * "By construction" is doing real work in that sentence, and it was wrong
+     * once: the divisor was the sum of 1..steps where the numerators are the
+     * sum of 0..steps-1, so the shares came to about four fifths and every
+     * keel in the office stopped a couple of units short of the plane the fog
+     * finishes on. What that draws is a grey block with a hard flat bottom
+     * hanging under each platform — reported, fairly, as a shadow under
+     * everything. If this expression is ever edited again, check that the
+     * shares sum to one before checking anything else.
+     */
+    const share = (i + 1.4) / ((steps * (steps - 1)) / 2 + 1.4 * steps);
+    const tall = reach * share;
+    y -= tall;
     pieces.push({
       shape: 'box',
       tone: 'stone',
       size: [w, tall, d],
-      at: [x, y - tall, z],
+      at: [x, y, z],
       // Bottom of the ramp, top of the ramp. Both rise with depth: the deeper
       // the course, the less the gradient takes off it.
-      grad: [0.3 + shade * 0.55, 0.86 + shade * 0.14],
+      grad: [0.3 + (i / Math.max(1, steps - 1)) * 0.55, 0.86 + (i / Math.max(1, steps - 1)) * 0.14],
     });
 
-    y -= tall;
-    left -= tall;
+    // The width of the *next* course, read off the profile at the depth this
+    // one ended, with a little noise so the neck is cut rather than turned.
+    const at = rockProfile(kind, (-0.55 - y) / reach) * (0.94 + random() * 0.12);
+    const nextW = Math.max(0.22, top[0] * at);
+    const nextD = Math.max(0.22, top[1] * at);
     // Half of what a course loses comes off the leaning side, so the face on
     // that side stays nearly sheer while the other cuts back in steps.
-    x += (w * (1 - shrinkX)) / 2 * lean[0] * bite * 2;
-    z += (d * (1 - shrinkZ)) / 2 * lean[1] * bite * 2;
-    w *= shrinkX;
-    d *= shrinkZ;
+    x += ((w - nextW) / 2) * lean[0] * bite * 2;
+    z += ((d - nextD) / 2) * lean[1] * bite * 2;
+    w = nextW;
+    d = nextD;
   }
   return pieces;
 }
@@ -1573,12 +2739,12 @@ function edgeToward(platform: Platform, point: [number, number, number]): Edge {
  * own. A building the same few colours as the ground it stands on reads as
  * carved out of the campus; one with its own palette reads as dropped onto it.
  */
-function palette(theme: ResolvedTheme, variant = 0): Record<Tone, string> {
+function palette(theme: ResolvedTheme, variant = 0, level = 0): Record<Tone, string> {
   // Whatever stone the platform is cut from, the building on it is cut from the
   // same — that is what makes architecture read as carved out of the campus
   // rather than dropped onto it, and it is now a per-platform answer rather
   // than a per-theme one.
-  const stone = stoneVariant(theme, variant);
+  const stone = stoneVariant(theme, variant, level);
   return {
     stone: stone.side,
     pale: mixHex(stone.top, theme.tones.top, 0.5),
@@ -1603,14 +2769,23 @@ function palette(theme: ResolvedTheme, variant = 0): Record<Tone, string> {
 }
 
 /** One draw call for a set of pieces, in whatever space they were planned in. */
-export function archGeometry(pieces: readonly Piece[], theme: ResolvedTheme, variant = 0): BufferGeometry | null {
+export function archGeometry(
+  pieces: readonly Piece[],
+  theme: ResolvedTheme,
+  variant = 0,
+  level = 0,
+): BufferGeometry | null {
   if (pieces.length === 0) return null;
-  const colors = palette(theme, variant);
+  const colors = palette(theme, variant, level);
   const parts: Part[] = [];
 
   for (const piece of pieces) {
-    const color = colors[piece.tone];
+    let color = colors[piece.tone];
     if (piece.shape === 'box') {
+      // Toward the bottom of the sky, which is the band a fall ends in and the
+      // colour the void fade is aiming at anyway — so the two compose instead
+      // of fighting.
+      if (piece.fade) color = mixHex(color, theme.sky[0], piece.fade);
       parts.push(
         box(piece.size[0], piece.size[1], piece.size[2], {
           color,
@@ -1766,19 +2941,28 @@ export function campusArchGeometry(
   theme: ResolvedTheme,
   /** A room that has not been built yet has nothing standing on it. */
   includes: (platform: Platform) => boolean = () => true,
+  /**
+   * Which staging slot each platform's architecture belongs to.
+   *
+   * Optional, and when it is given the freestanding pieces take slot 0: a
+   * gateway arch over a bridge belongs to the campus rather than to either
+   * room, and it has nothing to rise out of.
+   */
+  stage?: (platform: Platform) => number,
 ): BufferGeometry | null {
   const parts: BufferGeometry[] = [];
   for (const platform of campus.platforms) {
     if (!includes(platform)) continue;
     const pieces = plan.onPlatform.get(platform.id);
     if (!pieces) continue;
-    const geometry = archGeometry(pieces, theme, platform.stone);
+    const geometry = archGeometry(pieces, theme, platform.stone, platform.stoneLevel);
     if (!geometry) continue;
     geometry.translate(platform.position[0], levelY(platform.level), platform.position[1]);
+    if (stage) tagStage(geometry, stage(platform));
     parts.push(geometry);
   }
   const loose = detachedGeometry(plan, theme);
-  if (loose) parts.push(loose);
+  if (loose) parts.push(stage ? tagStage(loose, 0) : loose);
   if (parts.length === 0) return null;
   const merged = parts.length === 1 ? parts[0]! : mergeGeometries(parts);
   return merged ?? null;

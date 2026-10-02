@@ -50,7 +50,7 @@ Atrium reads the same `~/.claude` directory Claude Code already writes to, and s
 
 ### Office
 
-Every session gets a desk. Its agents walk to whichever part of the campus matches what they are actually running — the Library to read files, the Workshop to run commands, the Atelier to think and plan, the Watchtower to sit with background tasks, the Commons to spawn subagents, the Lounge when there is nothing to do. The paper stack on a desk is how full that session's context is. A ring over someone's head means they are waiting on you.
+Every session gets a desk and a mast flying its colour. Its agents walk to whichever part of the campus matches what they are actually running — the Library to read files, the Workshop to run commands, the Atelier to think and plan, the Watchtower to sit with background tasks, the Commons to spawn subagents, the Lounge when there is nothing to do. The flag on a desk's mast climbs as that session's context fills, so you can read the whole office's context off the skyline. A room glows a little while work is happening in it, and a ring over someone's head means they are waiting on you.
 
 The point is peripheral vision: you can tell across the room that something needs you, without reading anything.
 
@@ -64,7 +64,7 @@ A board of terminal cards, one per session, each rebuilding the Claude Code TUI 
 
 - A **menu bar glance** — session list, context bars, what each one is doing — without bringing a window forward.
 - A **usage panel** reading your real limits from the OAuth token Claude Code already stores, with a local estimate as the fallback.
-- **Day/night lighting** that follows your clock, six themes, and optional ambient music.
+- **Day/night lighting** that follows your clock through dawn, midday, golden hour, dusk and night — with lamps that pool on the floor after dark — plus four themes and optional ambient music.
 - A **simulation** (`⌥S`) that fills the office with invented sessions when you have none running. It is generated from nothing and never contains, or borrows from, anything real.
 
 ## Requirements
@@ -98,7 +98,7 @@ npm run dist       # a universal Atrium.dmg in dist/
 npm run dist:fast  # Apple Silicon only, for a quicker local build
 ```
 
-Keyboard: `⌘1` / `⌘2` switch views, `⌘,` opens Settings, `⌥S` swaps between your sessions and the simulation. In the office, drag to orbit, scroll to zoom, `[` / `]` swing 45°, `0` resets.
+Keyboard: `⌘1` / `⌘2` switch views, `⌘,` opens Settings, `⌥S` swaps between your sessions and the simulation. In the office, drag to orbit, scroll to zoom, `[` / `]` swing 45°, double-click a desk to frame it, and `0` or Escape resets.
 
 <details>
 <summary><b>Repository layout</b></summary>

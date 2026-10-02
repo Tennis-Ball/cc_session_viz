@@ -17,24 +17,46 @@ import { paletteAt } from '@shared/palette';
 export function FigureCard({
   agent,
   session,
-  caretaker,
+  npc,
+  doing,
+  talkingTo,
   pinned,
   onOpen,
   onClose,
 }: {
   agent?: AgentView | undefined;
   session?: SessionView | undefined;
-  caretaker: boolean;
+  npc: boolean;
+  /** What a caretaker is up to, in words. See `describeNpc`. */
+  doing?: string | undefined;
+  /**
+   * Who they have stopped to talk to, if anybody.
+   *
+   * Separate from the activity, and above it, because it is the thing you
+   * clicked to find out: two figures standing together doing nothing is the
+   * one state the office cannot explain by itself.
+   */
+  talkingTo?: string | undefined;
   pinned: boolean;
   onOpen: () => void;
   onClose: () => void;
 }): React.JSX.Element {
-  if (caretaker) {
+  if (npc) {
+    /*
+     * What they are doing first, and the disclaimer after.
+     *
+     * This used to lead with "not one of your sessions, and not doing anything
+     * on your behalf", which is true and is an apology rather than an answer.
+     * You pointed at somebody carrying a cup across a courtyard and were told
+     * it means nothing. The reason these people are here at all is that an
+     * office with nobody in it is a diagram — so the card says what they are
+     * up to, and then says, smaller, that it means nothing.
+     */
     return (
       <aside className="figure-card figure-card--quiet">
-        <h4>Caretaker</h4>
+        <h4>{talkingTo ?? doing ?? 'Someone who works here'}</h4>
         <p className="figure-card__note">
-          Somebody who works here. Not one of your sessions, and not doing anything on your behalf.
+          Somebody who works here. Not one of your sessions, and nothing they do means anything.
         </p>
         {pinned && (
           <button className="figure-card__close" onClick={onClose}>
@@ -58,6 +80,8 @@ export function FigureCard({
         <span className="figure-card__name">{session?.title ?? agent.agentType ?? 'Agent'}</span>
       </h4>
 
+      {talkingTo ? <p className="figure-card__talking">{talkingTo}</p> : null}
+
       <p className="figure-card__doing">
         {ACTIVITY_LABEL[agent.activity]}
         {detail?.target ? <span className="figure-card__target"> {detail.target}</span> : null}
@@ -74,6 +98,26 @@ export function FigureCard({
           <dt>model</dt>
           <dd>{model.label}</dd>
         </div>
+        {/*
+          * The number the gauge on the desk is showing.
+          *
+          * The post outside encodes it as a level, which is what you want from
+          * across a room and is not what you want once you have pointed at
+          * something — and there was nowhere at all to read the actual figure.
+          * The mark on the post is the compaction threshold, so that is named
+          * here too, or the tick is a line with no caption anywhere.
+          */}
+        {session && session.context.window > 0 && (
+          <div>
+            <dt>context</dt>
+            <dd>
+              {Math.round(session.context.pct)}%
+              {session.context.autoCompactPct > 0 && (
+                <span className="figure-card__target"> · compacts at {Math.round(session.context.autoCompactPct)}%</span>
+              )}
+            </dd>
+          </div>
+        )}
         {agent.stats.toolUses > 0 && (
           <div>
             <dt>tools</dt>

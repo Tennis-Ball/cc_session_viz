@@ -170,6 +170,21 @@ export function buildProp(parts: Part[]): BufferGeometry {
   return merged;
 }
 
+/**
+ * Stamps a geometry with the staging slot its vertices belong to.
+ *
+ * A constant per geometry, so a whole room carries one number and the shader
+ * can look up how far built it is without the renderer touching the mesh. It
+ * has to be set on *everything* that goes into the merged campus, including the
+ * pieces that never move: `mergeGeometries` refuses a set whose attributes do
+ * not match, and slot 0 is pinned at "settled" for exactly that reason.
+ */
+export function tagStage(geometry: BufferGeometry, slot: number): BufferGeometry {
+  const count = geometry.getAttribute('position').count;
+  geometry.setAttribute('aStage', new BufferAttribute(new Float32Array(count).fill(slot), 1));
+  return geometry;
+}
+
 /** Bakes the shader attributes onto a standalone geometry (figures, shadows). */
 export function prepareGeometry(geometry: BufferGeometry, grad: [number, number] = [0, 1]): BufferGeometry {
   const pos = geometry.getAttribute('position');

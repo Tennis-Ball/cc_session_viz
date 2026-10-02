@@ -556,9 +556,9 @@ describe('UsageMonitor polling', () => {
 
 describe('prefs migration', () => {
   it('drops the retired usage source without disturbing its neighbours', () => {
-    const merged = mergePrefs({ version: 1, usage: { source: 'estimate' }, motion: 'reduced' });
+    const merged = mergePrefs({ version: 1, usage: { source: 'estimate' }, hideSdkSessions: false });
     expect(merged).not.toHaveProperty('usage');
-    expect(merged.motion).toBe('reduced');
+    expect(merged.hideSdkSessions).toBe(false);
     expect(merged.sound).toEqual({ enabled: false, master: 0.5 });
   });
 });

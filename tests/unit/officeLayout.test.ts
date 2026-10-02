@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildCampus, type DeskRequest } from '@renderer/office/world/layout';
-import { CAMPUS, MAX_FLIGHT } from '@renderer/office/world/campusTemplate';
+import { spiralShape, WALK } from '@renderer/office/world/spiral';
+import { CAMPUS, MAX_FLIGHT, levelY } from '@renderer/office/world/campusTemplate';
 import { NavGraph, pathLength, pointAlong } from '@renderer/office/world/navGraph';
 
 function desks(count: number): DeskRequest[] {
@@ -26,6 +27,108 @@ describe('office layout', () => {
         const a = campus.platforms[i]!;
         const b = campus.platforms[j]!;
         expect(overlaps(a, b), `${a.id} overlaps ${b.id}`).toBe(false);
+      }
+    }
+  });
+
+  it('never stands two floors on the same ground, at any seed or any size', () => {
+    /*
+     * The seeded worlds are the ones that stack, and the check above only ever
+     * saw seed zero, which does not. A raised deck standing *on* its host is
+     * the one legitimate overlap — and only if it clears the host by a storey,
+     * or the pair reads as two platforms fighting over one cell.
+     */
+    for (let seed = 1; seed <= 12; seed += 1) {
+      for (const count of [1, 4, 9, 16]) {
+        const campus = buildCampus(desks(count), new Map(), seed, 'ornate');
+        for (let i = 0; i < campus.platforms.length; i++) {
+          for (let j = i + 1; j < campus.platforms.length; j++) {
+            const a = campus.platforms[i]!;
+            const b = campus.platforms[j]!;
+            if (!overlaps(a, b)) continue;
+            const where = `seed ${seed}, ${count} desks: ${a.id} over ${b.id}`;
+            expect(a.over === b.id || b.over === a.id, where).toBe(true);
+            expect(Math.abs(levelY(a.level) - levelY(b.level)), where).toBeGreaterThan(1.2);
+          }
+        }
+      }
+    }
+  });
+
+  it('walks a spiral up its own treads', () => {
+    /*
+     * The geometry and the route used to be worked out separately, and what
+     * that drew was every figure walking through the newel and out the other
+     * side. Both now ask `spiral.ts` for the same curve, and this is the check
+     * that they are still asking — a via point off the helix is a figure in
+     * mid air, and one at the wrong radius is a figure beside the treads.
+     */
+    let spirals = 0;
+    for (let seed = 1; seed <= 12; seed += 1) {
+      for (const count of [1, 6, 14]) {
+        const campus = buildCampus(desks(count), new Map(), seed, 'ornate');
+        for (const connector of campus.connectors) {
+          if (connector.style !== 'spiral') continue;
+          spirals += 1;
+          const shape = spiralShape(connector);
+          expect(connector.via, `${connector.id} has no route over itself`).toBeDefined();
+          const low = Math.min(connector.a[1], connector.b[1]);
+          const high = Math.max(connector.a[1], connector.b[1]);
+          for (const point of connector.via ?? []) {
+            const radius = Math.hypot(point[0] - shape.midX, point[2] - shape.midZ);
+            expect(radius, `${connector.id}: off the treads`).toBeCloseTo(shape.reach * WALK, 5);
+            expect(point[1]).toBeGreaterThanOrEqual(low - 1e-6);
+            expect(point[1]).toBeLessThanOrEqual(high + 1e-6);
+          }
+          // And it climbs the way it is walked, a to b, rather than always up.
+          const via = connector.via ?? [];
+          const first = via[0]?.[1] ?? 0;
+          const last = via[via.length - 1]?.[1] ?? 0;
+          expect(Math.sign(last - first)).toBe(Math.sign(connector.b[1] - connector.a[1]));
+        }
+      }
+    }
+    expect(spirals, 'no spirals in any world to check').toBeGreaterThan(20);
+  });
+
+  it('never crosses one walkway through another', () => {
+    /*
+     * Every adjacent pair of platforms gets a walkway, and two gaps that cross
+     * used to give two flights of stairs interleaved at the same height. See
+     * `pruneCrossings`.
+     */
+    for (let seed = 1; seed <= 12; seed += 1) {
+      for (const count of [1, 6, 14]) {
+        const campus = buildCampus(desks(count), new Map(), seed, 'ornate');
+        const walkways = campus.connectors;
+        for (let i = 0; i < walkways.length; i++) {
+          for (let j = i + 1; j < walkways.length; j++) {
+            const a = walkways[i]!;
+            const b = walkways[j]!;
+            if (a.from === b.from || a.from === b.to || a.to === b.from || a.to === b.to) continue;
+            const flat = (c: (typeof walkways)[number]): [number, number, number, number] => {
+              const half = c.width / 2;
+              const padX = c.axis === 'x' ? 0 : half;
+              const padZ = c.axis === 'x' ? half : 0;
+              return [
+                Math.min(c.a[0], c.b[0]) - padX,
+                Math.max(c.a[0], c.b[0]) + padX,
+                Math.min(c.a[2], c.b[2]) - padZ,
+                Math.max(c.a[2], c.b[2]) + padZ,
+              ];
+            };
+            const [aMinX, aMaxX, aMinZ, aMaxZ] = flat(a);
+            const [bMinX, bMaxX, bMinZ, bMaxZ] = flat(b);
+            const sharesFloor = aMaxX > bMinX && bMaxX > aMinX && aMaxZ > bMinZ && bMaxZ > aMinZ;
+            if (!sharesFloor) continue;
+            // Allowed only with a storey of headroom between them.
+            const aLow = Math.min(a.a[1], a.b[1]);
+            const aHigh = Math.max(a.a[1], a.b[1]);
+            const bLow = Math.min(b.a[1], b.b[1]);
+            const bHigh = Math.max(b.a[1], b.b[1]);
+            expect(aHigh + 1.4 <= bLow || bHigh + 1.4 <= aLow, `seed ${seed}: ${a.id} crosses ${b.id}`).toBe(true);
+          }
+        }
       }
     }
   });

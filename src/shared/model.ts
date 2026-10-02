@@ -114,7 +114,6 @@ export interface SessionView {
   cost?: { usd: number; linesAdded: number; linesRemoved: number };
   awaySummary?: { at: Ms; text: string };
   cmux?: { workspaceId: string; workspaceTitle?: string; surfaceId?: string };
-  groupId?: string;
   colorIndex: number;
 }
 
@@ -214,20 +213,6 @@ export interface MessageLink {
   delivered?: boolean;
 }
 
-export type GroupRule =
-  | { kind: 'slot'; slotId: SlotId }
-  | { kind: 'session'; sessionId: string }
-  | { kind: 'cwd'; path: string };
-
-export interface Group {
-  id: string;
-  name: string;
-  colorIndex: number;
-  rules: GroupRule[];
-  members: SlotId[];
-  createdAt: Ms;
-}
-
 export interface UsageBar {
   id: string;
   label: string;
@@ -304,7 +289,6 @@ export interface World {
   workflows: Record<string, WorkflowRun>;
   watches: Record<string, WatchTask>;
   links: MessageLink[];
-  groups: Record<string, Group>;
   usage: UsageSnapshot | null;
   health: WorldHealth;
 }
@@ -317,7 +301,6 @@ export function emptyWorld(): World {
     workflows: {},
     watches: {},
     links: [],
-    groups: {},
     usage: null,
     health: {
       source: 'live',

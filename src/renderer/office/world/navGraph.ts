@@ -110,7 +110,8 @@ export class NavGraph {
       // Across this platform to the foot of the walkway…
       points.push(...this.walk(platform, cursor, entry.position));
       // …then over it, by way of whatever it insists on. A straight flight
-      // insists on nothing; a lift insists on the inside of its own shaft.
+      // insists on nothing; a spiral insists on its own helix, or the figure
+      // walks through the newel.
       points.push(...entry.via, exit.position);
       cursor = exit.position;
       platform = exit.platform;

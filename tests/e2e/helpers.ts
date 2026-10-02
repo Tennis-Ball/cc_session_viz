@@ -102,6 +102,23 @@ export async function shoot(page: Page, name: string): Promise<void> {
   const app = OWNER.get(page);
   if (!app) throw new Error(`shoot(${name}): the page was not opened by launchApp`);
 
+  /*
+   * A crashed view is a passing test, and that is how one shipped.
+   *
+   * These specs take pictures; almost none of them assert. `ErrorBoundary`
+   * catches a render that throws and puts a tidy apology where the office was,
+   * so a run that killed the office on its ninth shot reported thirteen passes
+   * and the only trace was a 70 KB PNG among the two-megabyte ones. The one
+   * thing every shot can afford to check is that there is something to
+   * photograph.
+   */
+  // `count()` rather than a text read: a locator that waits would sit out the
+  // whole default timeout on every healthy shot.
+  if (await page.locator('.crash').count()) {
+    const why = await page.locator('.crash pre').first().textContent();
+    throw new Error(`shoot(${name}): the view had crashed — ${why ?? 'no message'}`);
+  }
+
   const encoded = await app.evaluate(async ({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows().find((candidate) => !candidate.webContents.getURL().includes('#tray'));
     if (!win) throw new Error('no main window to capture');

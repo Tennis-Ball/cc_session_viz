@@ -175,10 +175,21 @@ describe('the office reads at every hour', () => {
         expect(difference(p.floor, p.horizon), where).toBeGreaterThan(12);
       });
 
-      it(`tells a stair from the platform it climbs — ${where}`, () => {
-        expect(difference(p.tread, p.riser), where).toBeGreaterThan(30);
-        expect(difference(p.structure, p.floor), where).toBeGreaterThan(15);
-      });
+      // Ink & Paper is exempt here for the same reason it is exempt from the
+      // face test below, and the exemption is new: it used to separate a tread
+      // from its riser by making the riser almost black, which on a surface
+      // the size of a platform side is not a line but a hole — the campus came
+      // out as black masses on cream, which is the opposite of the print it is
+      // named for. It draws its edges now (see `Platforms`), so tone is not
+      // the mechanism it separates anything with, and measuring tone would
+      // only push it back toward the masses. What it has to clear instead is
+      // "never lets the ink pass through the paper", below.
+      if (!flat) {
+        it(`tells a stair from the platform it climbs — ${where}`, () => {
+          expect(difference(p.tread, p.riser), where).toBeGreaterThan(30);
+          expect(difference(p.structure, p.floor), where).toBeGreaterThan(15);
+        });
+      }
 
       it(`tells a figure and a zone color from the floor — ${where}`, () => {
         expect(difference(p.coral, p.floor), where).toBeGreaterThan(25);
@@ -277,16 +288,36 @@ describe('the flat theme stays flat', () => {
   });
 
   it('never lets the ink pass through the paper', () => {
-    // The interpolation is a straight line between the two halves, so a night
-    // half that swaps ink and paper has to cross in the middle: somewhere
-    // around dusk the two colors of a two-color print become one color and
-    // the campus vanishes. Whatever the night half does, it must not do that.
+    /*
+     * A two-colour print has exactly one way to fail: its two colours becoming
+     * one. That used to be an interpolation hazard — a night half that swapped
+     * ink and paper crossed in the middle and took the campus with it — and it
+     * is still the thing to measure now that the ink draws lines rather than
+     * filling faces, because a hairline the colour of the page is not a
+     * drawing, it is a blank sheet.
+     *
+     * The line is measured as the renderer draws it: flat, straight to the
+     * frame, no tone and no gradient. The paper goes through the office's own
+     * path, which is what it is seen against.
+     */
+    for (const id of flat) {
+      for (const [dayFactor, falling] of [
+        [0, false], [0.25, false], [0.5, false], [0.75, false], [1, false],
+        [0.25, true], [0.5, true], [0.75, true],
+      ] as const) {
+        const theme = resolveTheme(id, dayFactor, falling);
+        const paper = face(theme.platform.top, theme.tones.top);
+        const line = encode(linearOf(theme.ink!));
+        expect(difference(paper, line), `${id} @ ${dayFactor}${falling ? 'f' : 'r'}`).toBeGreaterThan(40);
+      }
+    }
+  });
+
+  it('has a line to draw with at every hour', () => {
     for (const id of flat) {
       for (const dayFactor of HOURS) {
-        const theme = resolveTheme(id, dayFactor);
-        const paper = face(theme.platform.top, theme.tones.top);
-        const ink = face(theme.platform.side, theme.tones.right, { grad: 0.4 });
-        expect(difference(paper, ink), `${id} @ ${dayFactor}`).toBeGreaterThan(40);
+        expect(resolveTheme(id, dayFactor).ink, `${id} @ ${dayFactor}`).toBeTypeOf('string');
+        expect(resolveTheme(id, dayFactor, true).ink, `${id} @ ${dayFactor} falling`).toBeTypeOf('string');
       }
     }
   });
@@ -301,8 +332,21 @@ describe('lamps and screens', () => {
     for (const id of THEMES) {
       expect(resolveTheme(id, 1).emissive, id).toBe(0);
       expect(resolveTheme(id, 0).emissive, id).toBeGreaterThan(0);
-      // And arrives over the evening rather than switching on.
-      expect(resolveTheme(id, 0.5).emissive, id).toBeCloseTo(resolveTheme(id, 0).emissive / 2, 5);
+      /*
+       * And arrives over the evening rather than switching on. This used to
+       * assert the midpoint was exactly half of night, which measured the
+       * interpolator rather than the office — and stopped being true the
+       * moment the cycle gained keyframes between the two ends. What matters
+       * is that the lamps only ever come up as the light goes down.
+       */
+      for (const falling of [false, true]) {
+        let previous = Infinity;
+        for (const step of [0, 0.2, 0.4, 0.6, 0.8, 1]) {
+          const now = resolveTheme(id, step, falling).emissive;
+          expect(now, `${id} @ ${step}${falling ? 'f' : 'r'}`).toBeLessThanOrEqual(previous + 1e-9);
+          previous = now;
+        }
+      }
     }
   });
 

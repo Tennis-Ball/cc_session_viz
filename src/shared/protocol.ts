@@ -7,7 +7,6 @@ import type { VisualEvent } from './events';
 import type {
   AgentView,
   DataMode,
-  Group,
   MessageLink,
   SessionView,
   SlotId,
@@ -41,7 +40,6 @@ export type EngineMsg =
       agents?: EntityPatch<AgentView>;
       workflows?: EntityPatch<WorkflowRun>;
       watches?: EntityPatch<WatchTask>;
-      groups?: EntityPatch<Group>;
       links?: { append: MessageLink[] };
       usage?: UsageSnapshot | null;
       health?: WorldHealth;
@@ -64,4 +62,12 @@ export type UiMsg =
   | { type: 'markSeen'; slot: SlotId }
   | { type: 'loadEarlier'; id: string; beforeEntryId: string }
   | { type: 'setDataMode'; mode: DataMode }
+  /**
+   * Settings the engine needs, rather than the renderer.
+   *
+   * Both of these decide which sessions *exist*, not how they are drawn, so
+   * they have to be applied where slots are tracked. Sent once prefs have
+   * hydrated and again whenever either changes.
+   */
+  | { type: 'setOptions'; hideSdkSessions: boolean; endedGraceMs: number }
   | { type: 'resync' };

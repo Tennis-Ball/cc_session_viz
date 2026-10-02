@@ -2,7 +2,25 @@ import { useEffect, useRef } from 'react';
 import { usePrefs } from '../../store/prefs';
 import { useWorld } from '../../store/world';
 import { dayFactorFor } from '../theme/themes';
-import { officeMusic } from './music';
+/*
+ * Loaded the first time sound is switched on, not at startup.
+ *
+ * The synthesiser is the better part of a thousand lines and it is off by
+ * default, so for almost everyone it was a kilobyte-for-kilobyte pure cost on
+ * the path to first paint. `import()` keeps it out of the opening chunk and
+ * costs one await the first time somebody wants music.
+ */
+type Music = typeof import('./music')['officeMusic'];
+let loading: Promise<Music> | null = null;
+let loaded: Music | null = null;
+
+function music(): Promise<Music> {
+  loading ??= import('./music').then((module) => {
+    loaded = module.officeMusic;
+    return loaded;
+  });
+  return loading;
+}
 
 /**
  * The music layer, tied to prefs, the clock and how busy the office is.
@@ -20,14 +38,16 @@ export function useOfficeMusic(): void {
   useEffect(() => {
     return window.atrium.window.onState((state) => {
       visible.current = state.visible;
-      if (!state.visible) officeMusic.stop();
-      else if (usePrefs.getState().prefs.sound.enabled) officeMusic.start();
+      // Only ever *stops* what is already loaded: a hidden window is not a
+      // reason to go and fetch a synthesiser.
+      if (!state.visible) loaded?.stop();
+      else if (usePrefs.getState().prefs.sound.enabled) void music().then((m) => m.start());
     });
   }, []);
 
   useEffect(() => {
-    if (enabled && visible.current) officeMusic.start();
-    else officeMusic.stop();
+    if (enabled && visible.current) void music().then((m) => m.start());
+    else loaded?.stop();
   }, [enabled]);
 
   // One update a second: the piece moves on its own, this only steers it.
@@ -36,7 +56,7 @@ export function useOfficeMusic(): void {
     const tick = (): void => {
       const sessions = Object.values(useWorld.getState().world.sessions);
       const working = sessions.filter((session) => session.phase === 'working').length;
-      officeMusic.update({
+      loaded?.update({
         volume,
         dayFactor: dayFactorFor(clockNow(pinnedClock)),
         intensity: sessions.length === 0 ? 0 : working / sessions.length,
@@ -47,7 +67,7 @@ export function useOfficeMusic(): void {
     return () => clearInterval(timer);
   }, [enabled, volume, pinnedClock]);
 
-  useEffect(() => () => officeMusic.dispose(), []);
+  useEffect(() => () => loaded?.dispose(), []);
 }
 
 /** The same pinned-hour rule the office lighting follows. */

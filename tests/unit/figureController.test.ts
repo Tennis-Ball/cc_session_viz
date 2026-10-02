@@ -194,4 +194,68 @@ describe('figure controller', () => {
     expect(nav.has('desk:gone')).toBe(false);
     expect(nav.nearestPlatform([library.position[0], levelY(library.level), library.position[1]])).toBe('zone:library');
   });
+
+  it('goes where the work is, and ignores a blink of it', () => {
+    /*
+     * The law the whole office rests on, measured rather than assumed.
+     *
+     * It had drifted a long way from the plan: thinking is sixty per cent of
+     * what an agent does and it maps to the desk, so with every activity
+     * counted equally the desk won permanently. Over five minutes of simulated
+     * traffic, reading reached the library seventeen times out of eighty-five
+     * and testing reached the workshop *never*. The office was a room full of
+     * people sitting down, surrounded by rooms nobody used.
+     *
+     * Both halves are checked here, because fixing one by breaking the other is
+     * exactly what the next pass of tuning did: with the window too short the
+     * figures spent seventy per cent of their time walking, which is not a busy
+     * office, it is a frantic one.
+     */
+    const campus = buildCampus(desks(['a']));
+    const resolver = resolverFor(campus, 'a');
+    const figure = spawn(resolver, 'agent');
+    let now = settle(figure, 0);
+
+    // A long stretch of thinking is a figure at its own desk.
+    now = run(figure, now, 12, 'thinking');
+    now = settle(figure, now);
+    expect(figure.currentZone).toBe('desk');
+
+    // A blink of something else does not move anybody: agents change tool
+    // every second or two and reacting to each one is the jitter this exists
+    // to stop.
+    now = run(figure, now, 0.3, 'searching');
+    now = run(figure, now, 6, 'thinking');
+    now = settle(figure, now);
+    expect(figure.currentZone, 'a third of a second of searching moved the figure').toBe('desk');
+
+    // A few seconds of it does.
+    now = run(figure, now, 5, 'searching');
+    now = settle(figure, now);
+    expect(figure.currentZone, 'five seconds of searching left the figure at its desk').toBe('library');
+
+    // And when the work comes home, so does the figure.
+    now = run(figure, now, 14, 'thinking');
+    now = settle(figure, now);
+    expect(figure.currentZone, 'the figure never came back from the library').toBe('desk');
+  });
+
+  it('answers every activity with the room the table says', () => {
+    /*
+     * One trip per activity, so a zone that has quietly stopped being reachable
+     * — a slot kind nothing allocates, a platform that is no longer built — is
+     * caught here rather than by noticing that the war room is always empty.
+     */
+    const campus = buildCampus(desks(['a']));
+    const resolver = resolverFor(campus, 'a');
+    let now = 0;
+    for (const [activity, target] of Object.entries(ACTIVITY_ZONE) as [Activity, { zone: ZoneId }][]) {
+      if (activity === 'offline') continue;
+      const figure = spawn(resolver, 'a');
+      now = settle(figure, now + 1000);
+      now = run(figure, now, 9, activity);
+      now = settle(figure, now);
+      expect(figure.currentZone, `${activity} should be at the ${target.zone}`).toBe(target.zone);
+    }
+  });
 });

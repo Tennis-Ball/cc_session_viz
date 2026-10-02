@@ -1,0 +1,94 @@
+/*
+ * The empty state, over either view.
+ *
+ * Pointer events are off on the layer and back on for the card, so an empty
+ * office can still be orbited with a drag that starts anywhere the caption is
+ * not — the picture stays the thing you are looking at.
+ */
+.empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* Over the office the caption sits low, so it never covers the campus. */
+.empty[data-view='office'] {
+  align-items: end;
+  padding-bottom: 9vh;
+}
+
+.empty__card {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px 26px;
+  border-radius: 14px;
+  text-align: center;
+  font-family: var(--font-ui);
+  /*
+   * Frosted, but opaque enough to stop a zone label reading straight through
+   * it. The office behind is the point; a caption you have to read *past* a
+   * word printed on the floor is not a caption.
+   */
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(14px) saturate(120%);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 40px rgb(0 0 0 / 0.25);
+}
+
+.empty__line {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+
+.empty__hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.empty__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.empty__button {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--text);
+  background: color-mix(in srgb, var(--agent) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--agent) 55%, transparent);
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.empty__button:hover {
+  background: color-mix(in srgb, var(--agent) 34%, transparent);
+}
+
+.empty__button:active {
+  transform: translateY(1px);
+}
+
+.empty__key {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+
+[data-motion='reduced'] .empty__button {
+  transition: none;
+}

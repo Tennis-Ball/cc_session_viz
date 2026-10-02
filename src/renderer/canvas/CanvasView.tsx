@@ -39,44 +39,76 @@ export function CanvasView(): React.JSX.Element {
   );
 }
 
+/**
+ * Below this the body is unreadable anyway, so it stops streaming.
+ *
+ * Every card on the board was subscribed regardless of where the viewport was
+ * or how far out it was zoomed, so a board of thirty sessions streamed thirty
+ * transcripts at 4 Hz to draw text the size of a hair. The engine was already
+ * built to be told what is visible; nothing was telling it.
+ */
+const READABLE_ZOOM = 0.3;
+/** How far outside the window a card still counts as worth streaming. */
+const PREFETCH = 600;
+
 function Board(): React.JSX.Element {
   const world = useWorld((s) => s.world);
-  const [now, setNow] = useState(() => Date.now());
-  const { setCenter } = useReactFlow();
+  const { fitView, getViewport } = useReactFlow();
   const framed = useRef(false);
+  const [viewport, setViewport] = useState(() => getViewport());
 
-  // Elapsed times and the spinner move on their own clock, not on world patches.
+  const { nodes, edges, cards } = useMemo(() => buildBoard(world), [world]);
+
+  /*
+   * Which cards are actually on screen.
+   *
+   * Recomputed from the viewport rather than from the node list, so panning
+   * changes the subscription and a world patch does not. `subscribeTranscripts`
+   * dedupes, so a pan that does not cross a card boundary costs nothing.
+   */
+  const visibleIds = useMemo(() => {
+    if (viewport.zoom < READABLE_ZOOM) return [];
+    const { x, y, zoom } = viewport;
+    const left = (-x - PREFETCH) / zoom;
+    const top = (-y - PREFETCH) / zoom;
+    const right = (-x + window.innerWidth + PREFETCH) / zoom;
+    const bottom = (-y + window.innerHeight + PREFETCH) / zoom;
+    return cards
+      .filter((card) => card.x < right && card.x + card.width > left && card.y < bottom && card.y + card.height > top)
+      .map((card) => card.cardId);
+  }, [cards, viewport]);
+
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+    engineClient.subscribeTranscripts(visibleIds);
+  }, [visibleIds]);
 
-  const { nodes, edges, cardIds } = useMemo(() => buildBoard(world, now), [world, now]);
-
-  useEffect(() => {
-    engineClient.subscribeTranscripts(cardIds);
-  }, [cardIds]);
-
-  // Open on the session that moved most recently, readable rather than zoomed
-  // out to fit a board that can be thousands of pixels wide.
+  /*
+   * Open on the whole board, clamped to a readable scale.
+   *
+   * This used to centre on one session and nudge it 120px down, which put the
+   * rest of the board off the right-hand edge and left more than half the
+   * window empty — on a view whose entire job is showing how sessions relate to
+   * each other. Fitting says how much there is; the clamp stops a single
+   * session being blown up to fill a 1440px window.
+   */
   useEffect(() => {
     if (framed.current || nodes.length === 0) return;
     framed.current = true;
-    const newest = Object.values(world.sessions).sort((a, b) => b.lastActivityAt - a.lastActivityAt)[0];
-    const focus = nodes.find((node) => node.id === `s:${newest?.id ?? ''}`) ?? nodes[0];
-    if (!focus) return;
-    const width = focus.width ?? SIZES.session.width;
-    const height = focus.height ?? SIZES.session.height;
-    requestAnimationFrame(() =>
-      setCenter(focus.position.x + width / 2, focus.position.y + height / 2 + 120, { zoom: 0.68, duration: 0 }),
-    );
-  }, [nodes, world.sessions, setCenter]);
+    requestAnimationFrame(() => fitView({ padding: 0.12, maxZoom: 0.75, minZoom: 0.08, duration: 0 }));
+  }, [nodes, fitView]);
 
   return (
     <div className="canvas-view">
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        /*
+         * On move *end*, not on move. React Flow fires `onMove` for every
+         * frame of a pan, and rebuilding the visible-card set sixty times a
+         * second during a drag costs more than the streaming it is there to
+         * save. What LOD needs to know is where the board came to rest.
+         */
+        onMoveEnd={(_event, next) => setViewport(next)}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         minZoom={0.05}
@@ -100,25 +132,43 @@ function Board(): React.JSX.Element {
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={24} size={2.5} color="#303030" />
-        {/* The bottom-left corner belongs to the usage panel now. */}
-        <Controls showInteractive={false} position="top-left" />
+        {/*
+         * Both in one corner, and styled in canvas.css rather than left as
+         * React Flow's defaults. They were a stock square button stack in one
+         * corner and a minimap whose mask was within a shade of the background
+         * in another — three different visual languages on a view that is
+         * otherwise a careful reproduction of a terminal.
+         */}
         <MiniMap
           pannable
           zoomable
           position="bottom-right"
-          maskColor="rgba(10,12,18,0.6)"
+          maskColor="rgba(8,9,12,0.72)"
+          maskStrokeColor="rgba(217,119,87,0.55)"
+          maskStrokeWidth={2}
           nodeColor={(node) => (node.data as { color?: string }).color ?? '#d97757'}
+          nodeStrokeWidth={0}
+          nodeBorderRadius={3}
         />
+        <Controls showInteractive={false} position="bottom-right" orientation="horizontal" />
       </ReactFlow>
       <UsagePanel />
     </div>
   );
 }
 
-function buildBoard(world: World, now: number): { nodes: Node[]; edges: Edge[]; cardIds: string[] } {
+interface BoardCard {
+  cardId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+function buildBoard(world: World): { nodes: Node[]; edges: Edge[]; cards: BoardCard[] } {
   const layout = layoutCanvas(world);
   const nodes: Node[] = [];
-  const cardIds: string[] = [];
+  const cards: BoardCard[] = [];
 
   const watchesBySlot = new Map<string, typeof world.watches[string][]>();
   for (const watch of Object.values(world.watches)) {
@@ -157,7 +207,13 @@ function buildBoard(world: World, now: number): { nodes: Node[]; edges: Edge[]; 
 
     const agent = placed.agentId ? world.agents[placed.agentId] : undefined;
     if (placed.agentId && !agent) continue;
-    cardIds.push(placed.agentId ?? placed.sessionId);
+    cards.push({
+      cardId: placed.agentId ?? placed.sessionId,
+      x: placed.x,
+      y: placed.y,
+      width: placed.width,
+      height: placed.height,
+    });
 
     // Body height minus the status footer decides how many lines fit.
     const chrome = placed.kind === 'session' ? 34 + 46 : 34;
@@ -172,7 +228,6 @@ function buildBoard(world: World, now: number): { nodes: Node[]; edges: Edge[]; 
         ...(agent ? { agent } : {}),
         watches: watchesBySlot.get(session.id) ?? [],
         workflows: workflowsBySlot.get(session.id) ?? [],
-        now,
         color,
         cols: Math.max(20, Math.floor((placed.width - BODY_PADDING) / CHAR_WIDTH)),
         bodyLines: Math.max(3, Math.floor((placed.height - chrome) / LINE_HEIGHT) - 1),
@@ -189,7 +244,7 @@ function buildBoard(world: World, now: number): { nodes: Node[]; edges: Edge[]; 
     data: { running: edge.running },
   }));
 
-  return { nodes, edges, cardIds };
+  return { nodes, edges, cards };
 }
 
 function measureCharWidth(): number {

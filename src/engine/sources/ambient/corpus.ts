@@ -439,3 +439,35 @@ export class Deck<T> {
     this.next = 0;
   }
 }
+
+/**
+ * MCP servers, which is the whole of what the office needs to light the rack.
+ *
+ * The tool name is the only part the classifier reads — `mcp__<server>__<tool>`
+ * — so the corpus is a list of plausible server names and nothing else.
+ */
+export const MCP_SERVERS: readonly string[] = [
+  'sentry__list_issues',
+  'linear__search_issues',
+  'postgres__query',
+  'figma__get_file',
+  'grafana__query_range',
+  'stripe__list_charges',
+  'notion__search',
+  'playwright__screenshot',
+];
+
+/**
+ * Commands that send something out of the building.
+ *
+ * `classifyBash` reads these as publishing, which is the mailroom — the one
+ * room the simulation could not reach at all, because nothing in the corpus
+ * ever pushed a branch or opened a review.
+ */
+export const PUBLISH_COMMANDS: readonly { command: string; description: string }[] = [
+  { command: 'git push -u origin HEAD', description: 'Push the branch' },
+  { command: 'gh pr create --fill', description: 'Open a pull request' },
+  { command: 'git push --force-with-lease', description: 'Update the branch' },
+  { command: 'gh pr comment --body-file notes.md', description: 'Post review notes' },
+  { command: 'gh release create v0.4.2 --generate-notes', description: 'Cut a release' },
+];

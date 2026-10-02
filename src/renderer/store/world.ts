@@ -48,12 +48,6 @@ export const useWorld = create<WorldState>((set) => ({
         for (const id of patch.watches.remove ?? []) delete watches[id];
         world.watches = watches;
       }
-      if (patch.groups) {
-        const groups = { ...world.groups };
-        for (const g of patch.groups.upsert ?? []) groups[g.id] = g;
-        for (const id of patch.groups.remove ?? []) delete groups[id];
-        world.groups = groups;
-      }
       if (patch.links?.append?.length) {
         world.links = [...world.links, ...patch.links.append].slice(-100);
       }

@@ -37,7 +37,23 @@ export class PrefsStore {
   }
 
   update(patch: PrefsPatch): Prefs {
-    const next = applyPatch(this.read(), patch);
+    /*
+     * Cleaned on the way in, not only on the way off disk.
+     *
+     * `applyPatch` is a shallow merge and believes whatever it is handed, and
+     * until now the only thing that checked a value was the *loader*. So a
+     * patch carrying a setting the app no longer has — `office.detail:
+     * 'composed'`, retired two rounds ago and still being set by a test —
+     * went straight into the cache and straight out to every renderer, where
+     * `STACKS[detail]` came back undefined and the office died with "Cannot
+     * read properties of undefined". Restarting fixed it, which is the worst
+     * kind of bug: the file was sanitised on the next read, so the evidence
+     * cleaned itself up.
+     *
+     * One pass through the same function that cleans the file. Nothing invalid
+     * can reach a renderer, whoever wrote it and however it got here.
+     */
+    const next = mergePrefs(applyPatch(this.read(), patch));
     this.cache = next;
     this.scheduleWrite();
     this.broadcast(next);

@@ -2,7 +2,6 @@ import type { VisualEvent } from '../../shared/events';
 import {
   emptyWorld,
   type AgentView,
-  type Group,
   type MessageLink,
   type SessionView,
   type UsageSnapshot,
@@ -16,7 +15,7 @@ import type { EngineMsg } from '../../shared/protocol';
 
 const MAX_LINKS = 100;
 
-type EntityKey = 'sessions' | 'agents' | 'workflows' | 'watches' | 'groups';
+type EntityKey = 'sessions' | 'agents' | 'workflows' | 'watches';
 
 /**
  * The canonical world plus dirty tracking. Patches carry whole replacement
@@ -29,14 +28,12 @@ export class WorldStore {
     agents: new Set(),
     workflows: new Set(),
     watches: new Set(),
-    groups: new Set(),
   };
   private readonly removed: Record<EntityKey, Set<string>> = {
     sessions: new Set(),
     agents: new Set(),
     workflows: new Set(),
     watches: new Set(),
-    groups: new Set(),
   };
   private newLinks: MessageLink[] = [];
   private usageDirty = false;
@@ -175,16 +172,7 @@ export class WorldStore {
     this.unmark('watches', id);
   }
 
-  upsertGroup(group: Group): void {
-    this.world.groups[group.id] = group;
-    this.mark('groups', group.id);
-  }
 
-  removeGroup(id: string): void {
-    if (!(id in this.world.groups)) return;
-    delete this.world.groups[id];
-    this.unmark('groups', id);
-  }
 
   appendLink(link: MessageLink): void {
     if (!this.reaches(link)) return;
@@ -204,6 +192,18 @@ export class WorldStore {
 
   emit(event: VisualEvent): void {
     this.events.push(event);
+    /*
+     * A message is the one event that is also a *fact*.
+     *
+     * Everything else here is choreography — a beat the office plays once and
+     * forgets, recoverable from `World` if it is missed. Who sent what to whom
+     * is not: it is the only record of it there is, the canvas draws an edge
+     * from it for ten minutes afterwards, and the office turns it into two
+     * figures walking over to talk. `appendLink` existed from the start and
+     * nothing ever called it, so `World.links` was permanently empty and both
+     * of those were drawing nothing.
+     */
+    if (event.t === 'message') this.appendLink(event.link);
   }
 
   drainEvents(): VisualEvent[] {
@@ -251,12 +251,6 @@ export class WorldStore {
       patch.watches = {
         upsert: [...this.dirty.watches].map((id) => this.world.watches[id]).filter((w): w is WatchTask => !!w),
         remove: [...this.removed.watches],
-      };
-    }
-    if (this.dirty.groups.size || this.removed.groups.size) {
-      patch.groups = {
-        upsert: [...this.dirty.groups].map((id) => this.world.groups[id]).filter((g): g is Group => !!g),
-        remove: [...this.removed.groups],
       };
     }
     if (this.newLinks.length) {

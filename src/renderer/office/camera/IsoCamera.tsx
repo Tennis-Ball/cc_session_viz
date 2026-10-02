@@ -15,9 +15,21 @@ import { fitView, type Point } from './fit';
  * the scene is never quite still.
  */
 
-const MIN_POLAR = 0.48; // ~28° above horizontal
-const MAX_POLAR = 1.08; // ~62°
-const DEFAULT_POLAR = 0.955; // the Monument Valley angle
+/*
+ * Polar is measured from straight up, so a *larger* number is a lower, more
+ * side-on camera. The old comments here had it backwards, which is part of how
+ * the range ended up where it did.
+ *
+ * The default sat at 0.955 — about 35° above the horizon — and read as looking
+ * down on a model rather than standing in a place. Monument Valley's own angle
+ * is lower than people remember. The range now reaches a genuinely side-on
+ * 18°, where the terraces overlap and the campus has depth; the top is held at
+ * 40° above the horizon, because past that the platforms flatten into a plan
+ * and the architecture stops having a silhouette at all.
+ */
+const MIN_POLAR = 0.87; // ~40° above the horizon
+const MAX_POLAR = 1.26; // ~18°, nearly side-on
+const DEFAULT_POLAR = 1.03; // ~31°
 const DEFAULT_AZIMUTH = Math.PI * 0.25;
 const DISTANCE = 60;
 const MIN_ZOOM = 8;
@@ -172,7 +184,18 @@ export function IsoCamera({ frame }: IsoCameraProps): null {
     }
     const a = azimuth.current;
     const p = polar.current;
-    const view = fitView(frame, azimuth.current, p, size);
+    /*
+     * Fitted at the angle the camera is actually at.
+     *
+     * The margin has to grow as the camera drops. Seen from side-on the campus
+     * is shallow on screen but its towers are at their tallest, so the fit is
+     * decided almost entirely by the two or three highest pieces — and with a
+     * fill of 0.96 the tops of them sat against the edge of the window. There
+     * is no cost to the extra room at a low angle: the office is narrow there
+     * anyway.
+     */
+    const lowness = clamp((p - MIN_POLAR) / (MAX_POLAR - MIN_POLAR), 0, 1);
+    const view = fitView(frame, azimuth.current, p, size, 0.95 - 0.09 * lowness);
 
     /**
      * The pivot eases toward the fit — and then *stops*.
@@ -230,6 +253,7 @@ export function IsoCamera({ frame }: IsoCameraProps): null {
     cameraState.azimuth = a;
     cameraState.polar = p;
     cameraState.zoom = camera.zoom;
+    cameraState.reach = userZoom.current;
   });
 
   return null;

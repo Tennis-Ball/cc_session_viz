@@ -29,13 +29,18 @@
  * world.
  */
 
+/*
+ * Faded by the camera rather than by a media query: see MAP_ZOOM in `Labels`.
+ * The variable is written once per change, not per frame.
+ */
 .office-label {
+  opacity: var(--office-label-presence, 1);
   display: inline-flex;
   align-items: center;
   gap: 6px;
   white-space: nowrap;
   font-family: var(--font-ui);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.13em;
   text-transform: uppercase;
@@ -46,14 +51,42 @@
    * and is simply not there.
    */
   color: var(--office-ink-strong, rgba(38, 26, 30, 0.62));
+  /*
+   * Haloed the way a map halos a place name, not outlined the way a sticker is.
+   *
+   * A name here can cross a pale deck, a dark rock face and open sky inside one
+   * word, so it has to carry its own contrast — a soft glow alone only helps
+   * against the first of those, which is why these used to read beautifully
+   * over a terrace and vanish over the drop beside it. The fix was a 2.6px
+   * `-webkit-text-stroke`, which is legible everywhere and is the wrong object:
+   * a stroke that wide is half the weight of the letter again, so the type
+   * thickens, the counters fill in and a quiet caption turns into a badge
+   * sitting on top of the picture. That was the "legible but not elegant".
+   *
+   * What cartography does instead is a *thin* halo cast in every direction at
+   * once. Eight one-pixel copies of the letterform in the paper colour, laid
+   * under it by `paint-order`-free stacking, separate the glyph from whatever
+   * is behind it without adding any apparent weight to it at all — the shape
+   * you read is exactly the shape the typeface drew. The wide soft glow stays
+   * on top of that, further out, doing what it was always good at: taking the
+   * hard edge off so the word sits in the picture rather than on it.
+   */
   text-shadow:
-    0 0 5px var(--office-ink-halo, rgba(255, 244, 236, 0.75)),
-    0 0 11px var(--office-ink-halo, rgba(255, 244, 236, 0.55));
+    1px 0 0 var(--office-ink-rim, rgba(255, 244, 236, 0.94)),
+    -1px 0 0 var(--office-ink-rim, rgba(255, 244, 236, 0.94)),
+    0 1px 0 var(--office-ink-rim, rgba(255, 244, 236, 0.94)),
+    0 -1px 0 var(--office-ink-rim, rgba(255, 244, 236, 0.94)),
+    0.75px 0.75px 0 var(--office-ink-rim, rgba(255, 244, 236, 0.94)),
+    -0.75px 0.75px 0 var(--office-ink-rim, rgba(255, 244, 236, 0.94)),
+    0.75px -0.75px 0 var(--office-ink-rim, rgba(255, 244, 236, 0.94)),
+    -0.75px -0.75px 0 var(--office-ink-rim, rgba(255, 244, 236, 0.94)),
+    0 0 8px var(--office-ink-halo, rgba(255, 244, 236, 0.8)),
+    0 0 16px var(--office-ink-halo, rgba(255, 244, 236, 0.5));
   user-select: none;
 }
 
 .office-label--desk {
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.06em;
   text-transform: none;
   color: var(--office-ink-strong, rgba(38, 26, 30, 0.62));
@@ -63,6 +96,10 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
+  /* The dot is not text, so it needs the same halo drawn for it by hand. */
+  box-shadow:
+    0 0 0 1px var(--office-ink-rim, rgba(255, 244, 236, 0.94)),
+    0 0 7px var(--office-ink-halo, rgba(255, 244, 236, 0.8));
 }
 
 /*
@@ -129,6 +166,19 @@
   margin: 0;
   font-size: 11.5px;
   color: rgba(255, 255, 255, 0.76);
+}
+
+/*
+ * Above the activity and brighter than it, because it is the answer.
+ *
+ * Two figures standing together is the one thing in the office you cannot work
+ * out by looking, so when it is what you clicked on it leads.
+ */
+.figure-card__talking {
+  margin: 0 0 3px;
+  font-size: 11.5px;
+  font-weight: 560;
+  color: rgba(255, 255, 255, 0.94);
 }
 
 .figure-card__target {

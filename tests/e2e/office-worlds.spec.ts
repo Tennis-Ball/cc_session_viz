@@ -51,7 +51,7 @@ test('worlds', async () => {
     await shoot(page, `world-1-${detail}`);
   }
   await page.evaluate(
-    () => (window as unknown as { atrium: { prefs: { set(patch: unknown): Promise<unknown> } } }).atrium.prefs.set({ office: { detail: 'composed' } }),
+    () => (window as unknown as { atrium: { prefs: { set(patch: unknown): Promise<unknown> } } }).atrium.prefs.set({ office: { detail: 'ornate' } }),
   );
   await page.waitForTimeout(2500);
 

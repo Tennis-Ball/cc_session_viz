@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   ATMOSPHERE,
+  CIRRUS,
   CLOUD_STRIDE,
+  CUMULUS,
+  SHAPE_STRIDE,
+  STRATUS,
+  createFlash,
+  flashAt,
+  horizonTones,
   atmosphereTones,
   birdPresence,
   cloudField,
@@ -21,6 +28,20 @@ function field(time: number, seed = SEED, drift = 0): Float32Array {
   const out = new Float32Array(CLOUDS * CLOUD_STRIDE);
   cloudField(time, seed, ASPECT, drift, out);
   return out;
+}
+
+/**
+ * How far a cloud moved, across the wrap.
+ *
+ * Lanes are spaced by the slot count, so which cloud happens to be mid-wrap at
+ * a given second is an accident of how many slots there are — and a test that
+ * reads one cloud's raw x twice is really testing that. The shortest signed
+ * distance on the ring is what "moved" means here.
+ */
+function moved(before: Float32Array, after: Float32Array, index: number): number {
+  const span = ASPECT + ATMOSPHERE.cloud.margin * 2;
+  const d = (cloud(after, index)[0] - cloud(before, index)[0] + span * 1.5) % span;
+  return d - span / 2;
 }
 
 /** [x, y, scale, alpha] for one cloud. */
@@ -67,8 +88,72 @@ describe('cloud placement', () => {
         expect(Math.abs(x)).toBeLessThanOrEqual(span / 2 + 1e-6);
         // The lowest a cloud reaches: its flat base, plus the edge feather.
         expect(y - r * 0.34).toBeGreaterThan(ATMOSPHERE.cloud.guard.lo);
-        expect(a).toBeGreaterThan(0);
-        expect(a).toBeLessThanOrEqual(ATMOSPHERE.cloud.alphaNear);
+        // A slot the weather has left empty still holds a real position: the
+        // placement is the invariant, and a cloud that jumped somewhere new on
+        // fading in would pop rather than gather.
+        expect(a).toBeGreaterThanOrEqual(0);
+        expect(a).toBeLessThanOrEqual(ATMOSPHERE.cloud.alphaNear * ATMOSPHERE.cloud.weather['rain']!.alpha);
+      }
+    }
+  });
+
+  it('empties most of a clear sky and fills a covered one', () => {
+    const drawn = (weather: string): number => {
+      const out = new Float32Array(CLOUDS * CLOUD_STRIDE);
+      cloudField(0, SEED, ASPECT, 0, out, undefined, weather);
+      let n = 0;
+      for (let i = 0; i < CLOUDS; i++) if (cloud(out, i)[3] > 0) n += 1;
+      return n;
+    };
+    // The point of the whole exercise: a grey day is more shapes, not the same
+    // shapes turned up, which is what made overcast read as haze.
+    expect(drawn('clear')).toBeLessThan(drawn('cloudy'));
+    expect(drawn('cloudy')).toBe(CLOUDS);
+    expect(drawn('clear')).toBeGreaterThan(2);
+  });
+
+  it('gives rain a lid, and a cloudy day puffs and wisps like a clear one', () => {
+    const kinds = (weather: string): Set<number> => {
+      const out = new Float32Array(CLOUDS * CLOUD_STRIDE);
+      const shape = new Float32Array(CLOUDS * SHAPE_STRIDE);
+      cloudField(0, SEED, ASPECT, 0, out, shape, weather);
+      const seen = new Set<number>();
+      for (let i = 0; i < CLOUDS; i++) if (cloud(out, i)[3] > 0) seen.add(shape[i * SHAPE_STRIDE]!);
+      return seen;
+    };
+    expect(kinds('clear')).toContain(CUMULUS);
+    expect(kinds('clear')).toContain(CIRRUS);
+    // A cloudy day is a *busy* sky, not a dim one: the same bright shapes as a
+    // clear one, more of them and bigger. Only rain gets the lid, and nothing
+    // wispy goes in front of a lid.
+    expect(kinds('cloudy')).toContain(CUMULUS);
+    expect(kinds('cloudy')).not.toContain(STRATUS);
+    expect(kinds('rain')).toEqual(new Set([STRATUS]));
+  });
+
+  it('keeps the grey for the rain', () => {
+    // Giving a cloudy day any grey at all made it read as a dirty version of
+    // clear rather than as a different day.
+    expect(ATMOSPHERE.cloud.weather['cloudy']!.grey).toBe(0);
+    expect(ATMOSPHERE.cloud.weather['rain']!.grey).toBeGreaterThan(0.5);
+    // And makes it bigger instead, which is where its weight comes from.
+    expect(ATMOSPHERE.cloud.weather['cloudy']!.size).toBeGreaterThan(
+      ATMOSPHERE.cloud.weather['clear']!.size,
+    );
+  });
+
+  it('keeps every weather clear of the guard', () => {
+    // The one rule the weather is not allowed to bend. A sheet that reaches
+    // down into the fade comes out half-dissolved, which is the haze the whole
+    // exercise was meant to stop being.
+    for (const weather of ['clear', 'cloudy', 'rain']) {
+      for (let t = 0; t < 2000; t += 53) {
+        const out = new Float32Array(CLOUDS * CLOUD_STRIDE);
+        cloudField(t, SEED, ASPECT, 0, out, undefined, weather);
+        for (let i = 0; i < CLOUDS; i++) {
+          const [, y, r] = cloud(out, i);
+          expect(y - r * 0.34).toBeGreaterThan(ATMOSPHERE.cloud.guard.lo);
+        }
       }
     }
   });
@@ -76,8 +161,7 @@ describe('cloud placement', () => {
   it('drifts slowly enough to take minutes to cross', () => {
     const start = field(0);
     const later = field(60);
-    const moved = cloud(later, CLOUDS - 1)[0] - cloud(start, CLOUDS - 1)[0];
-    expect(moved).toBeCloseTo(ATMOSPHERE.cloud.driftNear * 60, 5);
+    expect(moved(start, later, CLOUDS - 1)).toBeCloseTo(ATMOSPHERE.cloud.driftNear * 60, 5);
     // A near cloud needs three minutes or more to cross a 16:9 frame.
     expect(ASPECT / ATMOSPHERE.cloud.driftNear).toBeGreaterThan(180);
     expect(ATMOSPHERE.cloud.driftFar).toBeLessThan(ATMOSPHERE.cloud.driftNear);
@@ -116,9 +200,9 @@ describe('cloud placement', () => {
   });
 
   it('answers the camera without breaking the wrap', () => {
-    const still = cloud(field(120), CLOUDS - 1)[0];
-    const turned = cloud(field(120, SEED, ATMOSPHERE.parallax), CLOUDS - 1)[0];
-    expect(turned - still).toBeCloseTo(ATMOSPHERE.parallax, 5);
+    const still = field(120);
+    const turned = field(120, SEED, ATMOSPHERE.parallax);
+    expect(moved(still, turned, CLOUDS - 1)).toBeCloseTo(ATMOSPHERE.parallax, 5);
     // A quarter turn must be a nudge, not a sweep.
     expect(ATMOSPHERE.parallax).toBeLessThan(0.1);
   });
@@ -187,6 +271,108 @@ describe('flocks', () => {
     expect(a).toEqual(b);
   });
 });
+
+describe('sheet lightning', () => {
+  it('flashes often enough to be seen and rarely enough to ignore', () => {
+    const out = createFlash();
+    let lit = 0;
+    let peak = 0;
+    let strikes = 0;
+    let was = false;
+    const step = 0.02;
+    const window = 600;
+    for (let t = 0; t < window; t += step) {
+      flashAt(t, SEED, ASPECT, out);
+      const on = out.strength > 0.01;
+      if (on) lit += step;
+      if (on && !was) strikes += 1;
+      was = on;
+      peak = Math.max(peak, out.strength);
+    }
+
+    /*
+     * Both ends, because only one of them was ever in danger.
+     *
+     * The first numbers put a strike on screen one and a half per cent of the
+     * time, which is not "rare" — it is "never": a minute of watching a storm
+     * produced nothing at all, and an effect nobody sees is an effect that was
+     * not built. The ceiling is the easy half and the floor is the one that
+     * was missing.
+     */
+    expect(strikes / (window / 60)).toBeGreaterThan(1.5); // more than one a minute
+    expect(lit / window).toBeLessThan(0.06); // and under a sixteenth of the time
+    // Bounded: the point of it is that you can look at the office while it
+    // happens, which a full-frame white frame would not allow.
+    expect(peak).toBeGreaterThan(0.2);
+    expect(peak).toBeLessThanOrEqual(ATMOSPHERE.flash.strength);
+  });
+
+  it('strikes twice and dies away', () => {
+    const out = createFlash();
+    // Find a slot that fires, then walk the envelope inside it.
+    let base = -1;
+    for (let slot = 0; slot < 40 && base < 0; slot++) {
+      for (let u = 0; u < 1; u += 0.01) {
+        flashAt(slot * ATMOSPHERE.flash.period + u * ATMOSPHERE.flash.period, SEED, ASPECT, out);
+        if (out.strength > 0.05) {
+          base = slot * ATMOSPHERE.flash.period + u * ATMOSPHERE.flash.period;
+          break;
+        }
+      }
+    }
+    expect(base).toBeGreaterThanOrEqual(0);
+
+    const curve: number[] = [];
+    for (let t = 0; t < ATMOSPHERE.flash.lasts; t += 0.01) {
+      flashAt(base + t, SEED, ASPECT, out);
+      curve.push(out.strength);
+    }
+    // Two rises: a hard leading edge and a weaker second stroke. That shape is
+    // the whole of why it reads as lightning rather than as a light switch.
+    let rises = 0;
+    for (let i = 2; i < curve.length; i++) {
+      if (curve[i]! > curve[i - 1]! && curve[i - 1]! <= curve[i - 2]!) rises += 1;
+    }
+    expect(rises).toBeGreaterThanOrEqual(1);
+    expect(curve[curve.length - 1]!).toBeLessThan(curve[0]! * 0.5);
+  });
+
+  it('is the same storm for the same seed', () => {
+    const a = createFlash();
+    const b = createFlash();
+    flashAt(217.5, SEED, ASPECT, a);
+    flashAt(217.5, SEED, ASPECT, b);
+    expect(a).toEqual(b);
+  });
+});
+
+describe('the distance', () => {
+  it('cuts the rock further off the sky than the deck above it', () => {
+    for (const id of Object.keys(OFFICE_THEMES)) {
+      for (const day of [0, 0.5, 1]) {
+        const resolved = resolveTheme(id, day);
+        const { near, far } = horizonTones(resolved);
+        const horizon = resolved.sky[0];
+        // Two tones is what makes a distant fragment read as a terrace on its
+        // own rock rather than as one flat slab.
+        expect(distance(near, horizon)).toBeGreaterThan(distance(far, horizon));
+        // And both close enough to the sky to be scenery rather than an event.
+        expect(distance(near, horizon)).toBeLessThan(0.36);
+      }
+    }
+  });
+});
+
+/** Rough RGB distance, 0–1. Enough to ask "is this a shade off that". */
+function distance(a: string, b: string): number {
+  const rgb = (hex: string): number[] => {
+    const n = Number.parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
+  const [ar, ag, ab] = rgb(a);
+  const [br, bg, bb] = rgb(b);
+  return Math.hypot(ar! - br!, ag! - bg!, ab! - bb!) / 441.7;
+}
 
 describe('twinkle', () => {
   it('breathes gently and never goes dark', () => {

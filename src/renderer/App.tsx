@@ -1,6 +1,16 @@
-import { useEffect, useState } from 'react';
-import { CanvasView } from './canvas/CanvasView';
+import { lazy, Suspense, useEffect, useState } from 'react';
+/*
+ * The canvas arrives when you first ask for it.
+ *
+ * The app opens in the office, and the whole board — React Flow, the TUI
+ * formatters, the usage panel — was in the opening chunk regardless. Splitting
+ * it is worth more here than in a web app: the renderer bundle is read off
+ * disk at launch and parsed before the first frame of a scene that is the
+ * reason the app exists.
+ */
+const CanvasView = lazy(() => import('./canvas/CanvasView').then((m) => ({ default: m.CanvasView })));
 import { OfficeView } from './office/OfficeView';
+import { EmptyState } from './chrome/EmptyState';
 import { ErrorBoundary } from './chrome/ErrorBoundary';
 import { TitleBar } from './chrome/TitleBar';
 import { engineClient } from './engine/client';
@@ -18,25 +28,40 @@ export function App(): React.JSX.Element {
   const setMode = useUi((s) => s.setMode);
   const inspectorOpen = useUi((s) => s.inspectorOpen);
   const hydrate = usePrefs((s) => s.hydrate);
-  const motion = usePrefs((s) => s.prefs.motion);
+  const hideSdkSessions = usePrefs((s) => s.prefs.hideSdkSessions);
+  const endedGraceMs = usePrefs((s) => s.prefs.endedGraceMs);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   useOfficeMusic();
   useEffect(() => engineClient.start(), []);
   useEffect(() => void hydrate(), [hydrate]);
 
-  // Reduced motion is a document-level switch: CSS keys off it, and the office
-  // reads the same attribute rather than threading a prop through the scene.
+  // Two settings decide which sessions exist rather than how they are drawn,
+  // so the engine has to hear about them. Sent from here because this is the
+  // one component that outlives every mode switch.
+  useEffect(() => {
+    engineClient.setOptions({ hideSdkSessions, endedGraceMs });
+  }, [hideSdkSessions, endedGraceMs]);
+
+  /*
+   * Reduced motion follows the system, and only the system.
+   *
+   * There was a three-way setting in front of this. Nobody needs an app-level
+   * override for an accessibility preference they have already expressed once,
+   * in the place macOS asks for it — and the two extra options existed mostly
+   * to let somebody put the app out of step with the rest of their machine.
+   * CSS keys off the attribute, and the office reads the same one rather than
+   * threading a prop through the scene.
+   */
   useEffect(() => {
     const system = window.matchMedia('(prefers-reduced-motion: reduce)');
     const apply = (): void => {
-      const reduced = motion === 'reduced' || (motion === 'auto' && system.matches);
-      document.documentElement.dataset['motion'] = reduced ? 'reduced' : 'full';
+      document.documentElement.dataset['motion'] = system.matches ? 'reduced' : 'full';
     };
     apply();
     system.addEventListener('change', apply);
     return () => system.removeEventListener('change', apply);
-  }, [motion]);
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -81,12 +106,18 @@ export function App(): React.JSX.Element {
           <ErrorBoundary area="office">
             <OfficeView active={mode === 'office'} />
           </ErrorBoundary>
+          {mode === 'office' && <EmptyState view="office" />}
         </div>
         {mode === 'canvas' && (
           <div className="stage__layer" data-active>
             <ErrorBoundary area="canvas">
-              <CanvasView />
+              {/* No spinner: the board is a few hundred milliseconds away at
+                  most, and a flash of one is worse than a beat of nothing. */}
+              <Suspense fallback={null}>
+                <CanvasView />
+              </Suspense>
             </ErrorBoundary>
+            <EmptyState view="canvas" />
           </div>
         )}
         {inspectorOpen && <Inspector />}

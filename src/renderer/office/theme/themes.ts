@@ -49,22 +49,39 @@ export interface OfficeTheme {
   emissive: number;
 }
 
-export const OFFICE_THEMES: Record<string, { day: OfficeTheme; night: OfficeTheme }> = {
+/**
+ * Five palettes per theme, not two.
+ *
+ * Day and night alone cannot produce a golden hour, and not for want of good
+ * hexes: the midpoint of a lerp between a warm palette and a cool one is by
+ * construction less saturated than either end, and golden hour is *more*
+ * saturated than noon. Two keyframes can only ever give the office a muddy
+ * mauve halfway and call it dawn.
+ *
+ * So the cycle is authored where it bends. Noon is the coolest, flattest hour
+ * — which is also true outdoors, and which leaves the warmth somewhere to go;
+ * golden hour is the one that glows; dusk is the blue hour before the stars;
+ * dawn is golden hour's colder cousin, because the air at six in the morning
+ * has not been warmed by anything yet.
+ *
+ * Authoring noon cool is the part that pays for itself twice. The old day half
+ * was already a sunset, so the office looked the same from breakfast to
+ * bedtime and every visible change happened while you were asleep.
+ */
+export interface ThemeCycle {
+  night: OfficeTheme;
+  dawn: OfficeTheme;
+  day: OfficeTheme;
+  golden: OfficeTheme;
+  dusk: OfficeTheme;
+}
+
+export const OFFICE_THEMES: Record<string, ThemeCycle> = {
   monument: {
-    day: {
-      id: 'monument',
-      name: 'Monument',
-      sky: ['#FFE3C9', '#FFD2C4', '#C9C4EE'],
-      tones: { top: '#FFF6EC', left: '#EBBFAE', right: '#B07E76' },
-      platform: { top: '#FBEBDC', side: '#B5806F' },
-      accent: '#F2705A',
-      gradient: 0.35,
-      emissive: 0.0,
-    },
     // Moonlight on pale stone. The sky drops most of the way to black and the
     // campus only steps down, to a cool lavender grey: light enough that the
     // architecture still has three sides, far enough round the wheel from the
-    // day's warm cream that nobody mistakes the hour.
+    // day's cream that nobody mistakes the hour.
     night: {
       id: 'monument',
       name: 'Monument',
@@ -75,58 +92,130 @@ export const OFFICE_THEMES: Record<string, { day: OfficeTheme; night: OfficeThem
       gradient: 0.22,
       emissive: 1.0,
     },
-  },
-  ink: {
-    day: {
-      id: 'ink',
-      name: 'Ink & Paper',
-      sky: ['#FEE5C0', '#FEE5C0', '#FEE5C0'],
-      tones: { top: '#FEE5C0', left: '#FEE5C0', right: '#FEE5C0' },
-      platform: { top: '#FEE5C0', side: '#020202' },
-      accent: '#FB303D',
-      ink: '#020202',
-      gradient: 0,
-      emissive: 0,
+    // Cold light with a rose in it. Dawn is the one hour whose warmth sits in
+    // the sky and not on the stone, so the platforms stay nearly as cool as
+    // they were at night while the horizon goes pink above them.
+    dawn: {
+      id: 'monument',
+      name: 'Monument',
+      sky: ['#F3C0B4', '#D2A2B4', '#7E77AE'],
+      tones: { top: '#F4EFF2', left: '#D6C2C8', right: '#98868F' },
+      platform: { top: '#EDE4E6', side: '#A08D96' },
+      accent: '#F2705A',
+      gradient: 0.28,
+      emissive: 0.4,
     },
-    // Still one flat two-color print, with the page turned cool and the light
-    // behind it taken away. What changes at night is which of the two colors
-    // does the drawing: by day the sky is paper and the black sides cut the
-    // shapes out of it, at night the sky is gone and the pale page is the
-    // shape. Both are needed, and neither ever crosses the other.
-    //
-    // The previous night half swapped them outright — pale ink on dark paper.
-    // The swap cannot survive the interpolation: the ink has to travel from
-    // black to cream while the paper travels the other way, and around a
-    // dayFactor of 0.45 they meet, the two colors of a two-color print are the
-    // same color, and the whole campus disappears for the length of dusk.
+    // Noon: the coolest and flattest of the five. Nothing here glows, which is
+    // what makes the two golden keyframes either side of it read as light
+    // rather than as paint.
+    day: {
+      id: 'monument',
+      name: 'Monument',
+      sky: ['#DCE4F0', '#BCCFEC', '#8AA4D8'],
+      tones: { top: '#FFFBF6', left: '#DECFC6', right: '#9E8F8B' },
+      platform: { top: '#F7EFE8', side: '#A08A84' },
+      accent: '#F2705A',
+      gradient: 0.34,
+      emissive: 0.0,
+    },
+    // The hour the office was always trying to be. Warmer and *more* saturated
+    // than noon in every channel, which is the thing a two-point lerp could
+    // not reach.
+    golden: {
+      id: 'monument',
+      name: 'Monument',
+      sky: ['#FFD9AC', '#FFC3B0', '#C6B2E4'],
+      tones: { top: '#FFF2DE', left: '#F0B89E', right: '#B07A68' },
+      platform: { top: '#FCE6CE', side: '#B67A6A' },
+      accent: '#F2705A',
+      gradient: 0.36,
+      emissive: 0.12,
+    },
+    // Blue hour: the sun is gone, the sky has not finished. Stone turns violet
+    // before the sky does, so the campus is already night-coloured while the
+    // horizon still carries the last of the pink.
+    dusk: {
+      id: 'monument',
+      name: 'Monument',
+      sky: ['#C98CA4', '#8A6C9E', '#473F73'],
+      tones: { top: '#DCD1E6', left: '#AF97B2', right: '#736285' },
+      platform: { top: '#D0C5DE', side: '#8A77A4' },
+      accent: '#F2705A',
+      gradient: 0.28,
+      emissive: 0.75,
+    },
+  },
+  /*
+   * Ink & Paper is a two-colour print, and prints do not have a golden hour.
+   *
+   * Its five keyframes are really two: a warm page and a cold one, with the
+   * turn happening across dusk. What it gets instead of light is *line* — see
+   * `theme.ink` and the edge pass in `Platforms`. The sides used to do the
+   * drawing by being nearly black, which on a surface the size of a platform
+   * is not a line, it is a hole; they are a paper shade now and the ink draws
+   * the shapes.
+   */
+  ink: {
     night: {
       id: 'ink',
       name: 'Ink & Paper',
       sky: ['#3D3D47', '#3D3D47', '#3D3D47'],
       tones: { top: '#BABCC5', left: '#BABCC5', right: '#BABCC5' },
-      platform: { top: '#BABCC5', side: '#2A2A3A' },
+      platform: { top: '#BABCC5', side: '#9A9DA8' },
       accent: '#FB303D',
-      ink: '#2A2A3A',
+      ink: '#20202C',
       gradient: 0,
       emissive: 0.6,
     },
-  },
-  sage: {
+    dawn: {
+      id: 'ink',
+      name: 'Ink & Paper',
+      sky: ['#F7E4CE', '#F7E4CE', '#F7E4CE'],
+      tones: { top: '#F7E4CE', left: '#F7E4CE', right: '#F7E4CE' },
+      platform: { top: '#F7E4CE', side: '#D6C4AA' },
+      accent: '#FB303D',
+      ink: '#14121A',
+      gradient: 0,
+      emissive: 0.2,
+    },
     day: {
-      id: 'sage',
-      name: 'Sage',
-      sky: ['#E8F0DC', '#D6E7D2', '#AFCBD6'],
-      tones: { top: '#F2F7E8', left: '#CFE0C4', right: '#A9C0A0' },
-      platform: { top: '#E4EEDB', side: '#7E9A78' },
-      accent: '#2E9E96',
-      gradient: 0.32,
+      id: 'ink',
+      name: 'Ink & Paper',
+      sky: ['#FEE5C0', '#FEE5C0', '#FEE5C0'],
+      tones: { top: '#FEE5C0', left: '#FEE5C0', right: '#FEE5C0' },
+      platform: { top: '#FEE5C0', side: '#DCC3A0' },
+      accent: '#FB303D',
+      ink: '#14121A',
+      gradient: 0,
       emissive: 0,
     },
+    golden: {
+      id: 'ink',
+      name: 'Ink & Paper',
+      sky: ['#FFD9A2', '#FFD9A2', '#FFD9A2'],
+      tones: { top: '#FFD9A2', left: '#FFD9A2', right: '#FFD9A2' },
+      platform: { top: '#FFD9A2', side: '#DDB682' },
+      accent: '#FB303D',
+      ink: '#181119',
+      gradient: 0,
+      emissive: 0.1,
+    },
+    dusk: {
+      id: 'ink',
+      name: 'Ink & Paper',
+      sky: ['#6E5F66', '#6E5F66', '#6E5F66'],
+      tones: { top: '#D3CBC6', left: '#D3CBC6', right: '#D3CBC6' },
+      platform: { top: '#D3CBC6', side: '#AFA8A6' },
+      accent: '#FB303D',
+      ink: '#1D1A24',
+      gradient: 0,
+      emissive: 0.45,
+    },
+  },
+  sage: {
     // A petrol sky over stone that has cooled from garden green toward the
-    // sea. Sage is the flattest palette of the four by day, so its night keeps
-    // the tone spread narrow too and carries the hour in the turn of the hue.
-    // It stops short of the accent's teal: any further and the whiteboards
-    // and shelf backs stop standing out from the floor.
+    // sea. It stops short of the accent's teal: any further and the
+    // whiteboards and shelf backs stop standing out from the floor.
     night: {
       id: 'sage',
       name: 'Sage',
@@ -137,21 +226,51 @@ export const OFFICE_THEMES: Record<string, { day: OfficeTheme; night: OfficeThem
       gradient: 0.22,
       emissive: 1.0,
     },
-  },
-  sorbet: {
+    dawn: {
+      id: 'sage',
+      name: 'Sage',
+      sky: ['#D9CEC2', '#B4C0BE', '#7A93A4'],
+      tones: { top: '#E8EEE4', left: '#C2D0C6', right: '#93A79F' },
+      platform: { top: '#DCE6DC', side: '#8C9E96' },
+      accent: '#2E9E96',
+      gradient: 0.28,
+      emissive: 0.4,
+    },
     day: {
-      id: 'sorbet',
-      name: 'Sorbet',
-      sky: ['#FFE9F0', '#FFD9E4', '#CDE4FF'],
-      tones: { top: '#FFF3F6', left: '#F8D3DE', right: '#E0A8BE' },
-      platform: { top: '#FCE6EC', side: '#C98AA0' },
-      accent: '#8A6FD1',
-      gradient: 0.3,
+      id: 'sage',
+      name: 'Sage',
+      sky: ['#D4E4E2', '#AECCD8', '#6E9EBE'],
+      tones: { top: '#F4F8F0', left: '#C6D8C4', right: '#8EA898' },
+      platform: { top: '#E7F0E6', side: '#6E8C76' },
+      accent: '#2E9E96',
+      gradient: 0.32,
       emissive: 0,
     },
-    // Plum sky, stone that keeps its blush. Sorbet is the warmest palette by
-    // day and the only one whose accent is cooler than its stone, so its night
-    // holds more pink in the tones than the others to keep that reading.
+    golden: {
+      id: 'sage',
+      name: 'Sage',
+      sky: ['#F6E4C2', '#E4DCB8', '#A9C0CE'],
+      tones: { top: '#F6F2DC', left: '#D6DCB0', right: '#9CA878' },
+      platform: { top: '#EDEBCE', side: '#87946A' },
+      accent: '#2E9E96',
+      gradient: 0.34,
+      emissive: 0.12,
+    },
+    dusk: {
+      id: 'sage',
+      name: 'Sage',
+      sky: ['#9C8E9C', '#6E7A88', '#3C4E60'],
+      tones: { top: '#C8D6CE', left: '#93AAA6', right: '#6A8480' },
+      platform: { top: '#BACCC4', side: '#76988F' },
+      accent: '#2E9E96',
+      gradient: 0.26,
+      emissive: 0.75,
+    },
+  },
+  sorbet: {
+    // Plum sky, stone that keeps its blush. Sorbet is the only theme whose
+    // accent is cooler than its stone, so its night holds more pink in the
+    // tones than the others to keep that reading.
     night: {
       id: 'sorbet',
       name: 'Sorbet',
@@ -162,6 +281,46 @@ export const OFFICE_THEMES: Record<string, { day: OfficeTheme; night: OfficeThem
       gradient: 0.22,
       emissive: 1.0,
     },
+    dawn: {
+      id: 'sorbet',
+      name: 'Sorbet',
+      sky: ['#F4C6CE', '#DCACC8', '#8A82B8'],
+      tones: { top: '#FAEDF0', left: '#E6CAD6', right: '#A98FA6' },
+      platform: { top: '#F4E2E8', side: '#AE8FA2' },
+      accent: '#8A6FD1',
+      gradient: 0.26,
+      emissive: 0.4,
+    },
+    day: {
+      id: 'sorbet',
+      name: 'Sorbet',
+      sky: ['#E2DEF0', '#C4CCEE', '#8296DE'],
+      tones: { top: '#FFF8FA', left: '#EACFDA', right: '#AE93A0' },
+      platform: { top: '#FAEDF1', side: '#AE8496' },
+      accent: '#8A6FD1',
+      gradient: 0.3,
+      emissive: 0,
+    },
+    golden: {
+      id: 'sorbet',
+      name: 'Sorbet',
+      sky: ['#FFDCC6', '#FFC8D2', '#D2B6EE'],
+      tones: { top: '#FFEEE2', left: '#F8C8CE', right: '#DC9AA6' },
+      platform: { top: '#FEE2E2', side: '#CE8496' },
+      accent: '#8A6FD1',
+      gradient: 0.32,
+      emissive: 0.12,
+    },
+    dusk: {
+      id: 'sorbet',
+      name: 'Sorbet',
+      sky: ['#C286A8', '#8E5F84', '#4E3A60'],
+      tones: { top: '#EAD2E6', left: '#C29ABC', right: '#8E6E8E' },
+      platform: { top: '#E0C4DE', side: '#A582B4' },
+      accent: '#8A6FD1',
+      gradient: 0.26,
+      emissive: 0.75,
+    },
   },
 };
 
@@ -170,11 +329,17 @@ export type ThemeId = keyof typeof OFFICE_THEMES;
 export interface ResolvedTheme extends OfficeTheme {
   /** 0 = deep night, 1 = full day. Drives lamp glow and sky blending. */
   dayFactor: number;
+  /**
+   * Which side of noon. Dawn and dusk sit at the same amount of daylight and
+   * are not the same colour, so one number cannot place the office on the
+   * cycle: this is the other half of the coordinate.
+   */
+  falling: boolean;
 }
 
 /**
  * Local time → how much daylight there is. Dawn and dusk get a wide ramp so the
- * office spends real minutes in golden hour rather than snapping.
+ * office spends real minutes in each of them rather than snapping.
  */
 export function dayFactorFor(date: Date): number {
   const hours = date.getHours() + date.getMinutes() / 60;
@@ -184,26 +349,99 @@ export function dayFactorFor(date: Date): number {
   return 1 - smoothstep(17, 21, hours);
 }
 
-export function resolveTheme(id: string, dayFactor: number): ResolvedTheme {
-  const pair = OFFICE_THEMES[id] ?? OFFICE_THEMES['monument']!;
+/** True from solar noon onward, which is what tells dusk from dawn. */
+export function isFalling(date: Date): boolean {
+  const hours = date.getHours() + date.getMinutes() / 60;
+  return hours >= 12.5 || hours < 0.5;
+}
+
+/**
+ * Where each keyframe sits on the daylight ramp.
+ *
+ * The morning has one waypoint and the evening has two, which is not an
+ * oversight: the sun sets through a longer and more interesting set of colours
+ * than it rises through, and the evening is when somebody is actually watching.
+ * Positions are in `dayFactor`, so they follow whatever `dayFactorFor` does
+ * with the clock rather than pinning the look to an hour.
+ */
+const RISING: readonly [number, keyof ThemeCycle][] = [
+  [0, 'night'],
+  [0.45, 'dawn'],
+  [1, 'day'],
+];
+const FALLING: readonly [number, keyof ThemeCycle][] = [
+  [0, 'night'],
+  [0.35, 'dusk'],
+  [0.8, 'golden'],
+  [1, 'day'],
+];
+
+export function resolveTheme(id: string, dayFactor: number, falling = false): ResolvedTheme {
+  const cycle = OFFICE_THEMES[id] ?? OFFICE_THEMES['monument']!;
   const t = clamp01(dayFactor);
+  const stops = falling ? FALLING : RISING;
+
+  // The bracketing pair, and how far between them. Both lists end at 1, so
+  // there is always a segment to land in.
+  let index = 0;
+  while (index < stops.length - 2 && t > stops[index + 1]![0]) index += 1;
+  const [fromAt, fromKey] = stops[index]!;
+  const [toAt, toKey] = stops[index + 1]!;
+  const span = toAt - fromAt;
+  const k = span <= 0 ? 1 : clamp01((t - fromAt) / span);
+  const a = cycle[fromKey];
+  const b = cycle[toKey];
+
   return {
-    ...pair.day,
-    sky: [mixHex(pair.night.sky[0], pair.day.sky[0], t), mixHex(pair.night.sky[1], pair.day.sky[1], t), mixHex(pair.night.sky[2], pair.day.sky[2], t)],
+    ...b,
+    sky: [mixHex(a.sky[0], b.sky[0], k), mixHex(a.sky[1], b.sky[1], k), mixHex(a.sky[2], b.sky[2], k)],
     tones: {
-      top: mixHex(pair.night.tones.top, pair.day.tones.top, t),
-      left: mixHex(pair.night.tones.left, pair.day.tones.left, t),
-      right: mixHex(pair.night.tones.right, pair.day.tones.right, t),
+      top: mixHex(a.tones.top, b.tones.top, k),
+      left: mixHex(a.tones.left, b.tones.left, k),
+      right: mixHex(a.tones.right, b.tones.right, k),
     },
     platform: {
-      top: mixHex(pair.night.platform.top, pair.day.platform.top, t),
-      side: mixHex(pair.night.platform.side, pair.day.platform.side, t),
+      top: mixHex(a.platform.top, b.platform.top, k),
+      side: mixHex(a.platform.side, b.platform.side, k),
     },
-    gradient: pair.night.gradient + (pair.day.gradient - pair.night.gradient) * t,
-    emissive: pair.night.emissive + (pair.day.emissive - pair.night.emissive) * t,
-    ...(pair.day.ink ? { ink: mixHex(pair.night.ink ?? pair.day.ink, pair.day.ink, t) } : {}),
+    gradient: a.gradient + (b.gradient - a.gradient) * k,
+    emissive: a.emissive + (b.emissive - a.emissive) * k,
+    ...(b.ink !== undefined ? { ink: mixHex(a.ink ?? b.ink, b.ink, k) } : {}),
     dayFactor: t,
+    falling,
   };
+}
+
+/**
+ * Where the light is coming from, as an offset on the tone basis.
+ *
+ * Without this the office is lit identically at six in the morning and eight
+ * at night, and orbiting reads as turning a model on a table rather than
+ * walking around a place: the tone basis follows the camera, so if nothing
+ * else moves, nothing about the light ever changes.
+ *
+ * The sweep is deliberately less than the sun's real one. The basis is what
+ * keeps every face readable from every angle, and swinging it far enough to be
+ * literal puts the dark side of the campus toward the viewer twice a day.
+ */
+/**
+ * Where the sun is, as a world azimuth.
+ *
+ * Rises in one quarter, sets in the opposite one, and passes overhead in
+ * between — which is the whole of what makes the sky change through the day
+ * rather than merely change colour. The office itself is lit by the tone basis
+ * (see `sunOffsetFor`); this is for anything that has to know where in the sky
+ * to draw the light, which so far is the glow on the sky quad.
+ */
+export function sunAzimuthFor(dayFactor: number, falling: boolean): number {
+  const arc = falling ? 1 - clamp01(dayFactor) * 0.5 : clamp01(dayFactor) * 0.5;
+  return Math.PI * (0.5 - arc);
+}
+
+export function sunOffsetFor(dayFactor: number, falling: boolean): number {
+  // 0 at first light, 1 at last: the sun's whole arc laid out along the ramp.
+  const arc = falling ? 1 - clamp01(dayFactor) * 0.5 : clamp01(dayFactor) * 0.5;
+  return 0.35 + (arc - 0.5) * 1.1;
 }
 
 function clamp01(value: number): number {
@@ -228,6 +466,16 @@ function hexToRgb(hex: string): [number, number, number] {
   const full = value.length === 3 ? value.split('').map((c) => c + c).join('') : value;
   const num = Number.parseInt(full, 16);
   return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+/**
+ * Perceived brightness, 0–1. Used to decide what colour something drawn *on*
+ * a surface has to be, which is a question the hour cannot answer: a platform
+ * top is pale at midnight too.
+ */
+export function luma(hex: string): number {
+  const [r, g, b] = hexToRgb(hex);
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 }
 
 function rgbToHex(r: number, g: number, b: number): string {
@@ -262,10 +510,15 @@ export const STONE_COUNT = 5;
  * related — they are one material seen from two angles, and drifting them apart
  * is what makes flat shading look like a bug.
  */
-export function stoneVariant(theme: OfficeTheme | ResolvedTheme, variant: number): { top: string; side: string } {
+export function stoneVariant(
+  theme: OfficeTheme | ResolvedTheme,
+  variant: number,
+  level = 0,
+): { top: string; side: string } {
   const step = ((variant % STONE_COUNT) + STONE_COUNT) % STONE_COUNT;
   // Centred on zero so the middle variant is the theme exactly as authored.
   const offset = step - (STONE_COUNT - 1) / 2;
+
   /*
    * Weighted toward lightness rather than hue, which is the opposite of the
    * obvious choice and the one that actually works here.
@@ -273,17 +526,40 @@ export function stoneVariant(theme: OfficeTheme | ResolvedTheme, variant: number
    * A platform top sits around 93% lightness, and at that end of the scale hue
    * has almost nowhere to go — five stones separated by hue alone were clearly
    * different on the rock below, which is mid-toned, and very nearly identical
-   * on the floors above, which is where most of the frame is. Dropping the
-   * lightness gives the pale end somewhere to move and lets the chroma show at
-   * the same time, so a room reads as sand or as chalk rather than as two
-   * cream-whites a few degrees apart.
+   * on the floors above, which is where most of the frame is.
+   *
+   * Saturation used to rise with the hue shift, on the theory that a stone
+   * needed help to read as its own colour. It does not: the two ends of the
+   * range are also the two furthest from the theme's hue, so the loudest stone
+   * was also the most saturated one, and in Monument that lands on mustard. On
+   * a big platform it became the brightest thing in a frame that meant nothing
+   * by it. Saturation now falls slightly at the extremes, which is what stone
+   * does — the further a rock is from the local colour, the paler it tends to
+   * be.
    */
-  const hue = offset * 14;
-  const light = offset * -0.05;
-  const saturation = 1 + offset * 0.2;
+  const hue = offset * 9;
+  const light = offset * -0.035;
+  const saturation = 1 - Math.abs(offset) * 0.06;
+
+  /*
+   * Terraces, on top of the variant.
+   *
+   * The campus is stacked, and nothing about its colour said so: a platform
+   * three levels down was the same rock as one at the top, so height had to be
+   * read entirely from geometry. Biasing lightness and warmth by level gives
+   * the place strata — lower is darker and warmer, the way a quarry face is —
+   * which is a depth cue the flat shading cannot provide on its own.
+   *
+   * It is deliberately smaller than the variant step, so it never overrules
+   * the one job the variant has: telling neighbouring rooms apart.
+   */
+  const terrace = Math.max(-3, Math.min(3, level));
+  const levelLight = terrace * 0.018;
+  const levelHue = terrace * 2.5;
+
   return {
-    top: shiftHex(theme.platform.top, hue, saturation, light),
-    side: shiftHex(theme.platform.side, hue, saturation, light * 0.7),
+    top: shiftHex(theme.platform.top, hue + levelHue, saturation, light + levelLight),
+    side: shiftHex(theme.platform.side, hue + levelHue, saturation, (light + levelLight) * 0.7),
   };
 }
 

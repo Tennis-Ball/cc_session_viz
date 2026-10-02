@@ -25,6 +25,43 @@ describe('office slots', () => {
     }
   });
 
+  it('never hands two agents the same patch of floor', () => {
+    /*
+     * The structural half of "figures do not stand inside each other".
+     *
+     * The other half is the nudge in `separateFigures`, which is capped at about
+     * half a body on purpose — it has to be, or it would shove somebody off a
+     * staircase — and so it can part two figures but not unpile ten. It never
+     * has to: a claim is only ever made against a free slot, and the overflow
+     * ring is laid out on the occupancy grid. If that stops being true, the
+     * office gets a heap of figures at one prop that no amount of nudging can
+     * sort out, which is why this is asserted here rather than left to the
+     * renderer to cope with.
+     */
+    const campus = buildCampus(desks(6));
+    const map = new Map<string, PropSlot[]>();
+    for (const platform of campus.platforms) {
+      const prop = buildPropFor(platform, propPalette(THEME, platform));
+      if (prop) map.set(platform.id, prop.slots);
+    }
+    const pool = new SlotPool(campus, map);
+
+    for (const platform of campus.platforms) {
+      const taken: [number, number][] = [];
+      for (let i = 0; i < 12; i++) {
+        const claim = pool.claim(`${platform.id}:crowd${i}`, platform.id, 'bench');
+        taken.push([claim.position[0], claim.position[2]]);
+      }
+      for (let i = 0; i < taken.length; i++) {
+        for (let j = i + 1; j < taken.length; j++) {
+          const gap = Math.hypot(taken[i]![0] - taken[j]![0], taken[i]![1] - taken[j]![1]);
+          // Two bodies at full size want 0.88 between their centres.
+          expect(gap, `${platform.id}: #${i} and #${j} share a spot`).toBeGreaterThan(0.88);
+        }
+      }
+    }
+  });
+
   it('keeps overflow standing room on the platform too', () => {
     const campus = buildCampus(desks(4));
     const map = new Map<string, PropSlot[]>();

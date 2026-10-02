@@ -1,4 +1,13 @@
-import { BufferGeometry, ConeGeometry, CylinderGeometry, OctahedronGeometry, BoxGeometry, TetrahedronGeometry, SphereGeometry } from 'three';
+import {
+  BufferGeometry,
+  CapsuleGeometry,
+  ConeGeometry,
+  CylinderGeometry,
+  OctahedronGeometry,
+  BoxGeometry,
+  TetrahedronGeometry,
+  SphereGeometry,
+} from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { AgentRole } from '@shared/model';
 import { prepareGeometry } from '../props/kit';
@@ -16,7 +25,17 @@ const HEAD_RADIUS = 0.17;
 const BODY_HEIGHT = 0.78;
 const HEAD_Y = BODY_HEIGHT + HEAD_RADIUS * 0.72;
 
-function bodyFor(role: AgentRole): BufferGeometry {
+/**
+ * Everyone the office can draw.
+ *
+ * `npc` is not an agent role and never comes from the engine — it exists only
+ * here, because the people who work in the office have to be told apart from
+ * the people who are your sessions, and the only honest way to do that is to
+ * make them a different shape.
+ */
+export type FigureShape = AgentRole | 'npc';
+
+function bodyFor(role: FigureShape): BufferGeometry {
   switch (role) {
     case 'main':
       // A cone: the tallest, calmest silhouette on the floor.
@@ -33,6 +52,19 @@ function bodyFor(role: AgentRole): BufferGeometry {
       // Forks echo their parent, so they get the plainest body and read as a
       // copy through their translucency instead.
       return new CylinderGeometry(0.2, 0.24, BODY_HEIGHT, 8).translate(0, BODY_HEIGHT / 2, 0);
+    case 'npc':
+      /*
+       * A soft capsule, and the only rounded body in the office.
+       *
+       * Everybody else is faceted — a cone, a cube on its corner, an
+       * octahedron — because a flat-shaded solid is what carries a role. The
+       * people who merely work here get the one silhouette that has no
+       * corners at all, so they read as *not one of those* from across the
+       * campus, at any angle, without being smaller or dimmer. Making them
+       * small was the old answer and it was the wrong one: it said
+       * "unimportant" when what was meant is "not yours".
+       */
+      return new CapsuleGeometry(0.26, BODY_HEIGHT - 0.52, 4, 12).translate(0, BODY_HEIGHT / 2, 0);
     default:
       return new CylinderGeometry(0.26, 0.26, BODY_HEIGHT, 6).translate(0, BODY_HEIGHT / 2, 0);
   }
@@ -58,7 +90,7 @@ function mergeable(geometry: BufferGeometry): BufferGeometry {
   return flat;
 }
 
-export function figureGeometry(role: AgentRole): BufferGeometry {
+export function figureGeometry(role: FigureShape): BufferGeometry {
   const body = mergeable(bodyFor(role));
   const head = mergeable(new SphereGeometry(HEAD_RADIUS, 14, 10).translate(0, HEAD_Y, 0));
   const merged = mergeGeometries([body, head], false);
@@ -70,7 +102,7 @@ export function figureGeometry(role: AgentRole): BufferGeometry {
   return prepareGeometry(merged, [0, 1]);
 }
 
-export const FIGURE_ROLES: AgentRole[] = ['main', 'general-purpose', 'Explore', 'Plan', 'workflow', 'fork', 'custom'];
+export const FIGURE_ROLES: FigureShape[] = ['main', 'general-purpose', 'Explore', 'Plan', 'workflow', 'fork', 'custom', 'npc'];
 
 /**
  * Model tier → body scale. Bigger model, bigger presence.

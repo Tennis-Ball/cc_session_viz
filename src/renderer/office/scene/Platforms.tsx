@@ -1,14 +1,18 @@
-import { useMemo } from 'react';
-import type { BufferGeometry } from 'three';
+import { useMemo, useRef, useState } from 'react';
+import { useFrame } from '@react-three/fiber';
+import { EdgesGeometry, type BufferGeometry } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { paletteAt } from '@shared/palette';
-import { createFacetMaterial } from '../material/facet';
-import { box, buildProp, slab, type Part } from '../props/kit';
+import { Staging } from '../anim/staging';
+import { MAX_STAGES, createFacetMaterial, createInkMaterial, stageUniforms } from '../material/facet';
+import { box, buildProp, slab, tagStage, type Part } from '../props/kit';
 import { buildPropFor, propPalette } from '../props/registry';
 import { stoneVariant, type ResolvedTheme } from '../theme/themes';
+import { spiralShape, spiralStep, WALK } from '../world/spiral';
 import { levelY, PLATFORM_THICKNESS } from '../world/campusTemplate';
 import type { Campus, Connector, Platform } from '../world/layout';
 import { campusArchGeometry, corbelArch, type ArchPlan } from '../world/architecture';
+import { LightPools } from './LightPools';
 import { REBUILDS } from '../OfficeView';
 
 /**
@@ -24,39 +28,194 @@ export function Platforms({
   campus,
   theme,
   architecture,
+  staging,
+  onPick,
 }: {
   campus: Campus;
   theme: ResolvedTheme;
   architecture: ArchPlan;
+  /** Owned by the office, because the masts and the labels read it too. */
+  staging: Staging;
+  /** Where a double-click landed, in world space. See `nearestDesk`. */
+  onPick?: (point: [number, number, number]) => void;
 }): React.JSX.Element {
-  const material = useMemo(() => createFacetMaterial(), []);
+  const material = useMemo(() => createFacetMaterial({ staged: true }), []);
+
+  /*
+   * Arrivals and departures.
+   *
+   * Kept in a ref and ticked from `useFrame`, never in state: a room rising
+   * takes ninety frames and re-rendering the office for each of them is the
+   * one thing this view is built not to do. The only reason anything here
+   * touches React at all is `revision` — the merged mesh has to be rebuilt on
+   * the frames where the *set* of rooms changes, and not otherwise.
+   */
+  const [revision, setRevision] = useState(0);
+  const previous = useRef(campus);
+
+  const shown = useMemo(() => {
+    // A room that has gone is kept for as long as it takes to sink, which is
+    // why the reading is taken against the campus from a moment ago.
+    if (previous.current !== campus) {
+      staging.remember(previous.current);
+      previous.current = campus;
+    }
+    staging.sync(campus, MAX_STAGES);
+    return {
+      platforms: [...campus.platforms, ...staging.sinking()],
+      connectors: [...campus.connectors, ...staging.sinkingConnectors()],
+    };
+    // `revision` is the second half of the reason this recomputes: a room
+    // finishing its descent has to leave the mesh, and nothing about the
+    // campus changes when it does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campus, staging, revision]);
 
   const palette = `${theme.id}:${Math.round(theme.dayFactor * 12)}`;
-  const geometry = useMemo(() => {
+  const inked = theme.ink !== undefined;
+  const built = useMemo(() => {
     REBUILDS.geometry += 1;
     const parts: BufferGeometry[] = [];
-    for (const platform of campus.platforms) parts.push(platformGeometry(platform, theme));
+    /*
+     * The outlines, built per room and tagged before they are merged.
+     *
+     * `EdgesGeometry` keeps `position` and discards everything else, so an
+     * outline taken from the finished campus knows nothing about which room it
+     * belongs to — which is why, in Ink & Paper, a room rising left its own
+     * wireframe hanging above it. Taken per part, each set of lines can carry
+     * the same staging slot its solid does.
+     */
+    const outlines: BufferGeometry[] = [];
+    const edge = (geometry: BufferGeometry, slot: number): void => {
+      if (!inked) return;
+      outlines.push(tagStage(new EdgesGeometry(geometry, 30), slot));
+    };
+    const staged = (id: string): number => staging.slotOf(id);
+    for (const platform of shown.platforms) {
+      const piece = tagStage(platformGeometry(platform, theme), staged(platform.id));
+      edge(piece, staged(platform.id));
+      parts.push(piece);
+    }
     // A walkway takes the stone of the platform it lands on, which for a stair
-    // is the lower end — the one whose floor it continues.
-    const stoneOf = new Map(campus.platforms.map((platform) => [platform.id, platform.stone]));
-    for (const connector of campus.connectors) {
-      parts.push(connectorGeometry(connector, theme, stoneOf.get(connector.from) ?? 0));
+    // is the lower end — the one whose floor it continues. Both halves of that
+    // stone come from the same platform, or the landing is a different colour
+    // from the floor it lands on.
+    const stoneOf = new Map(shown.platforms.map((p) => [p.id, [p.stone, p.stoneLevel] as const]));
+    for (const connector of shown.connectors) {
+      const [stone, level] = stoneOf.get(connector.from) ?? [0, 0];
+      // A walkway rises with whichever end is doing the moving, so a bridge to
+      // a new room arrives with it rather than reaching out over nothing.
+      const slot = staging.walkwaySlot(connector.from, connector.to);
+      const piece = tagStage(connectorGeometry(connector, theme, stone, level), slot);
+      edge(piece, slot);
+      parts.push(piece);
     }
     // The architecture merges in here rather than into a mesh of its own: it
     // is made of the same stone and lit by the same rules, and one more draw
     // call per frame for something that never moves would be a waste.
     //
-    const built = campusArchGeometry(campus, architecture, theme);
-    if (built) parts.push(built);
+    for (const platform of shown.platforms) {
+      const raised = campusArchGeometry(
+        { ...campus, platforms: [platform] },
+        architecture,
+        theme,
+        () => true,
+        () => staged(platform.id),
+      );
+      if (!raised) continue;
+      edge(raised, staged(platform.id));
+      parts.push(raised);
+    }
+
     const merged = mergeGeometries(parts, false);
     for (const part of parts) part.dispose();
-    return merged ?? parts[0]!;
+    const lines = outlines.length > 0 ? mergeGeometries(outlines, false) : null;
+    for (const outline of outlines) outline.dispose();
+    return { geometry: merged ?? parts[0]!, lines };
     // `palette` stands in for the theme: rebuilding on every interpolated frame
     // would merge the whole campus sixty times a second for no visible gain.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campus, architecture, palette]);
+  }, [shown, campus, architecture, palette, inked]);
+  const geometry = built.geometry;
 
-  return <mesh geometry={geometry} material={material} frustumCulled={false} />;
+  /*
+   * How far under the world a struck room sits.
+   *
+   * Far enough to be inside the void fade from every level the campus uses, so
+   * a room that has not arrived is not merely low — it is gone. Measured off
+   * the campus rather than fixed, because a hillside world can span twice the
+   * height of a flat one, and a room that starts *above* the fade is a building
+   * that drops into place out of clear sky.
+   */
+  const drop = useMemo(() => {
+    let low = Infinity;
+    let high = -Infinity;
+    for (const platform of campus.platforms) {
+      const y = levelY(platform.level);
+      low = Math.min(low, y);
+      high = Math.max(high, y);
+    }
+    if (!Number.isFinite(low)) return 24;
+    // The span, the void fade below it, and headroom for whatever is standing
+    // on the tallest terrace.
+    return high - low + 24;
+  }, [campus]);
+
+  useFrame((_state, delta) => {
+    const stage = stageUniforms(material);
+    if (!stage) return;
+    stage.uStageDrop.value = drop;
+    staging.setDrop(drop);
+    const { retired } = staging.step(Math.min(delta, 0.1));
+    staging.write(stage.uStage.value);
+    // The outlines travel with the solids they outline.
+    const ink = edgeMaterial ? stageUniforms(edgeMaterial) : null;
+    if (ink) {
+      ink.uStageDrop.value = drop;
+      ink.uStage.value.set(stage.uStage.value);
+    }
+    // Only when something finished: this is the frame a sunk room leaves the
+    // mesh, and the only React render the whole animation costs.
+    if (retired) setRevision((n) => n + 1);
+  });
+
+  /*
+   * Ink & Paper's lines, and only its lines.
+   *
+   * The theme is named for a two-colour print and had no line in it at all:
+   * what drew the shapes was a platform side the colour of ink, which on a
+   * surface that size is not a line but a hole, and the campus came out as
+   * black masses on cream. Every other theme is a solid; this one is a
+   * drawing, and a drawing needs an edge.
+   *
+   * Cheap because everything above is already one merged geometry, so this is
+   * one more buffer and one more draw call, built on exactly the occasions the
+   * mesh itself is rebuilt. The threshold keeps it to real creases and
+   * silhouettes rather than outlining every triangle in the campus.
+   */
+  const edgeMaterial = useMemo(() => (theme.ink === undefined ? null : createInkMaterial(theme.ink)), [theme.ink]);
+
+  return (
+    <>
+      <mesh
+        geometry={geometry}
+        material={material}
+        frustumCulled={false}
+        onDoubleClick={(event) => {
+          if (!onPick) return;
+          // Only the nearest hit: a campus is a merged mesh, so a ray through
+          // it reports every floor it passes through on the way down.
+          event.stopPropagation();
+          onPick([event.point.x, event.point.y, event.point.z]);
+        }}
+      />
+      {built.lines && edgeMaterial && (
+        <lineSegments geometry={built.lines} material={edgeMaterial} frustumCulled={false} />
+      )}
+      {/* Read off the same merged geometry, so every lamp in it is accounted for. */}
+      <LightPools geometry={geometry} campus={campus} theme={theme} staging={staging} />
+    </>
+  );
 }
 
 
@@ -84,7 +243,7 @@ export function platformGeometry(platform: Platform, theme: ResolvedTheme): Buff
   const [width, depth] = platform.size;
   // Each room is cut from its own stone, so the campus reads as a group of
   // masses rather than one continuous floor. See `stoneVariant`.
-  const stone = stoneVariant(theme, platform.stone);
+  const stone = stoneVariant(theme, platform.stone, platform.stoneLevel);
   const parts: Part[] = [
     slab(width, depth, PLATFORM_THICKNESS, {
       color: stone.top,
@@ -93,21 +252,25 @@ export function platformGeometry(platform: Platform, theme: ResolvedTheme): Buff
     }),
   ];
 
-  // A desk platform wears its session's colour, which is how you pick your own
-  // session out of a crowded office. It goes on as an inlay rather than as a
-  // painted floor: a band around the rim carries the colour at full strength,
-  // and the rug inside it is muted into the stone so the platform still reads
-  // as stone.
+  /*
+   * A desk platform wears its session's colour as a rug, and nothing else.
+   *
+   * There used to be a band of it around the whole rim as well, at full
+   * strength. It was the only saturated thing in the frame and it was an
+   * outline — which is how a web page marks a selected card, not how this
+   * picture uses colour, and at the default framing it read as a stray piece
+   * of interface pasted onto the scene. Monument Valley puts colour in planes.
+   *
+   * What the band was actually for — picking your own session out of a crowded
+   * office, from any angle and any zoom — a floor could never do anyway, since
+   * a floor is the first thing the next platform along hides. That job moved
+   * to the pile; see `DeskPiles`. The rug can now go back to being a rug.
+   */
   if (platform.kind === 'desk' && platform.colorIndex !== undefined) {
     const color = paletteAt(platform.colorIndex);
     parts.push(
-      box(width + 0.12, 0.13, depth + 0.12, {
-        color: color.base,
-        position: [platform.position[0], y - 0.17, platform.position[1]],
-        grad: [0.82, 1],
-      }),
-      box(width * 0.46, 0.035, depth * 0.46, {
-        color: mix(color.base, stone.top, 0.55),
+      box(width * 0.52, 0.035, depth * 0.52, {
+        color: mix(color.base, stone.top, 0.42),
         position: [platform.position[0], y + FLOOR_LIFT, platform.position[1]],
         grad: [0.85, 1],
       }),
@@ -186,7 +349,12 @@ function fract(value: number): number {
   return x - Math.floor(x);
 }
 
-export function connectorGeometry(connector: Connector, theme: ResolvedTheme, stone = 0): BufferGeometry {
+export function connectorGeometry(
+  connector: Connector,
+  theme: ResolvedTheme,
+  stone = 0,
+  level = 0,
+): BufferGeometry {
   /*
    * A walkway is cut from the stone of the platform it lands on.
    *
@@ -197,7 +365,7 @@ export function connectorGeometry(connector: Connector, theme: ResolvedTheme, st
    * the flashing all over again. Taking the lower platform's stone keeps the
    * walkway part of the room it arrives in.
    */
-  const variant = stoneVariant(theme, stone);
+  const variant = stoneVariant(theme, stone, level);
   const color = variant.side;
   /**
    * You walk on the same stone the platforms are paved with.
@@ -276,7 +444,6 @@ export function connectorGeometry(connector: Connector, theme: ResolvedTheme, st
   }
 
   if (connector.style === 'spiral') return spiralGeometry(connector, color, paving);
-  if (connector.style === 'lift') return liftGeometry(connector, color, paving);
 
   // Build from the low end upward, which is also the way it is walked.
   const up = connector.b[1] >= connector.a[1];
@@ -367,35 +534,52 @@ export function connectorGeometry(connector: Connector, theme: ResolvedTheme, st
       );
     }
 
-    // A rail up one side, following the treads. Only sometimes: on every
-    // flight it stops being a detail and starts being a fence.
+    /*
+     * A rail up one side, following the treads. Only sometimes: on every
+     * flight it stops being a detail and starts being a fence.
+     *
+     * The handrail is *raked*, which it was not. A post every two steps each
+     * carried its own flat bar at its own height, so a sloping flight got a
+     * staircase of disconnected horizontal bars — from any distance, a dotted
+     * line of little T shapes trailing off the side of the stair, which is one
+     * of the things that read as "the generation is broken". A handrail is one
+     * continuous thing at the pitch of the flight, and the only way to draw it
+     * out of boxes is to tilt them.
+     */
     if (railed && i % 2 === 0) {
+      const side = (-landingSide * (width - CHEEK)) / 2;
+      const pitch = Math.atan2(riser, tread);
+      // Long enough to overlap its neighbour, so the run reads as unbroken.
+      const bar = Math.hypot(tread * 2, riser * 2) * 1.08;
       parts.push(
-        box(alongX ? 0.1 : 0.1, 0.62, alongX ? 0.1 : 0.1, {
+        box(0.1, 0.62, 0.1, {
           color: paving,
-          position: [
-            x + (alongX ? 0 : (-landingSide * (width - CHEEK)) / 2),
-            top,
-            z + (alongX ? (-landingSide * (width - CHEEK)) / 2 : 0),
-          ],
+          position: [x + (alongX ? 0 : side), top, z + (alongX ? side : 0)],
           grad: [0.6, 1],
         }),
-        box(alongX ? tread * 2.1 : 0.11, 0.1, alongX ? 0.11 : tread * 2.1, {
+        box(alongX ? bar : 0.11, 0.1, alongX ? 0.11 : bar, {
           color: paving,
-          position: [
-            x + (alongX ? 0 : (-landingSide * (width - CHEEK)) / 2),
-            top + 0.62,
-            z + (alongX ? (-landingSide * (width - CHEEK)) / 2 : 0),
-          ],
+          position: [x + (alongX ? 0 : side), top + 0.62, z + (alongX ? side : 0)],
+          rotation: alongX ? [0, 0, dirX * pitch] : [-dirZ * pitch, 0, 0],
           grad: [0.85, 1],
         }),
       );
     }
 
-    // The cheeks: the same steps again, thin and deeper, down each side.
+    /*
+     * The cheeks: the same steps again, thin and deeper, down each side.
+     *
+     * Stopped a wearing course *under* the tread, not level with it. Reaching
+     * the walking surface put a stone-coloured face on the same plane as the
+     * paving beside it, and the depth test picked between them per pixel — so
+     * every flight in the office wore a dotted line of little grey diamonds
+     * down it, which is one of the things that read as broken generation.
+     * Nothing on a walkway may come up to the height you walk on except the
+     * thing you walk on.
+     */
     for (const side of [-1, 1]) {
       parts.push(
-        box(alongX ? tread : CHEEK, height + 0.3, alongX ? CHEEK : tread, {
+        box(alongX ? tread : CHEEK, height + 0.3 - WEARING_COURSE - 0.02, alongX ? CHEEK : tread, {
           color: theme.platform.side,
           position: [
             x + (alongX ? 0 : (side * (spread - CHEEK)) / 2),
@@ -430,63 +614,64 @@ export function connectorGeometry(connector: Connector, theme: ResolvedTheme, st
  * radius, makes each tread overlap the one below it — which is what a spiral
  * stair actually looks like and, not coincidentally, how one stays walkable.
  */
-const SPIRAL_TREADS = 26;
+/*
+ * A spiral is a *stair*, and a stair has a step height.
+ *
+ * Both the tread count and the sweep used to be constants: twenty-six treads
+ * over one and a half turns, whatever the drop. Across a level and a half that
+ * is a rise of six centimetres a tread against a tread twenty-two thick, and a
+ * turn of twenty degrees against a tread long enough to overlap its neighbour
+ * four times over — so the treads interpenetrated and splayed outward. Not a
+ * helix: a fan of cards wrapped round a post, in every world, at every seed.
+ *
+ * Step height is the thing that is actually fixed in a stair. The count follows
+ * the rise, the sweep follows the count, and the tread is cut to the arc it has
+ * to fill — so a short flight makes a quarter turn of deep treads and a long
+ * one makes three half-turns of shallow ones, which is what a spiral stair
+ * does.
+ */
+/** What one step climbs. */
+const RISER = 0.24;
+/** And roughly how far round it goes; the sweep is snapped off this. */
+const TURN_PER_TREAD = 0.44;
 
 function spiralGeometry(connector: Connector, color: string, paving: string): BufferGeometry {
-  const up = connector.b[1] >= connector.a[1];
-  const low = up ? connector.a : connector.b;
-  const high = up ? connector.b : connector.a;
-
-  const midX = (low[0] + high[0]) / 2;
-  const midZ = (low[2] + high[2]) / 2;
-  const rise = high[1] - low[1];
+  // The curve itself lives in `world/spiral.ts`, because the router walks the
+  // same one. They were worked out separately once and disagreed, and what
+  // that drew was every figure walking straight through the newel.
+  const shape = spiralShape(connector);
+  const { low, high, rise, midX, midZ, reach, treads, tread } = shape;
   const alongX = connector.axis === 'x';
   const run = alongX ? Math.abs(high[0] - low[0]) : Math.abs(high[2] - low[2]);
 
-  /**
-   * Where it starts, where it ends, and why it is one and a half turns.
-   *
-   * The first version swept 1.35 turns from wherever the low end happened to
-   * be, which left the top tread sixty degrees away from the platform it was
-   * supposed to arrive at, and the bottom tread already a step up and a step
-   * round from the one it left. It was a corkscrew floating in the gap with no
-   * way on and no way off.
-   *
-   * A spiral has to land square at both ends, and it does that when its sweep
-   * is an odd multiple of half a turn: the low end points one way, the high
-   * end points exactly opposite, which is where the other platform is. Three
-   * half-turns gives a proper twist and still arrives facing the right way.
-   */
-  const turn = fract(low[0] * 2.3 + high[2]) < 0.5 ? 1 : -1;
-  const start = Math.atan2(low[2] - midZ, low[0] - midX);
-  const sweep = Math.PI * 3 * turn;
-
-  const reach = Math.max(0.95, (run / 2) * 0.62);
-  const tread = 0.72;
+  // Treads run from just inside the newel out to `reach`, centred on the line
+  // `WALK` puts them — the same line the router walks, so a figure is always
+  // on the middle of a step rather than off the edge of one.
+  const depth = reach * (1 - WALK) * 2;
+  const newel = Math.max(0.46, reach * 0.44);
 
   const parts: Part[] = [
-    // The newel, from under the lower deck to the upper.
-    box(0.4, rise + 1.2, 0.4, {
+    // The newel, from under the lower deck to the upper. Wide enough to hide
+    // where the inner ends of the treads run into each other.
+    box(newel, rise + 1.2, newel, {
       color,
       position: [midX, low[1] - 0.8, midZ],
       grad: [0.3, 1],
     }),
   ];
 
-  for (let i = 0; i <= SPIRAL_TREADS; i++) {
-    const t = i / SPIRAL_TREADS;
-    const angle = start + sweep * t;
-    const y = low[1] + rise * t;
-    const x = midX + Math.cos(angle) * reach * 0.5;
-    const z = midZ + Math.sin(angle) * reach * 0.5;
+  for (let i = 0; i <= treads; i++) {
+    const t = i / treads;
+    const { at, angle } = spiralStep(shape, t);
+    const [x, y, z] = at;
     parts.push(
-      box(reach, 0.22 - WEARING_COURSE, tread, {
+      box(depth, 0.22 - WEARING_COURSE, tread, {
         color,
         position: [x, y - 0.22, z],
         rotation: [0, -angle, 0],
         grad: [0.42, 1],
       }),
-      box(reach - 0.12, WEARING_COURSE, tread - 0.12, {
+      box(depth - 0.12, WEARING_COURSE, tread - 0.12, {
         color: paving,
         position: [x, y - WEARING_COURSE, z],
         rotation: [0, -angle, 0],
@@ -504,7 +689,18 @@ function spiralGeometry(connector: Connector, color: string, paving: string): Bu
    * the helix begins, which is also where a figure crossing the connector
    * actually walks.
    */
-  const bridge = Math.max(0.6, run / 2 - reach * 0.5 + 0.5);
+  const bridge = Math.max(0.5, run / 2 - reach + 0.45);
+  /*
+   * And no wider than the flight it serves.
+   *
+   * The landing used to be the connector's full width, which on a two-level
+   * climb is four units against a helix two and a bit across — so it sat over
+   * the stair like a lid and, from an isometric camera, the only thing you
+   * could see of a spiral was its two landings. A landing is the foot of this
+   * flight, not a piece of the platform, and it should be the size of the
+   * flight.
+   */
+  const apron = Math.min(connector.width, reach * 1.8);
   /*
    * How far the landing tucks back under the platform, so there is no hairline
    * of sky where the two meet. Only the *base* is allowed to do that: its top
@@ -526,7 +722,7 @@ function spiralGeometry(connector: Connector, color: string, paving: string): Bu
     const deckRun = bridge - TUCK;
     const deckCentre = (toward * deckRun) / 2;
     parts.push(
-      box(alongX ? bridge : connector.width, 0.26 - WEARING_COURSE, alongX ? connector.width : bridge, {
+      box(alongX ? bridge : apron, 0.26 - WEARING_COURSE, alongX ? apron : bridge, {
         color,
         position: [
           end[0] + (alongX ? baseCentre : 0),
@@ -535,7 +731,7 @@ function spiralGeometry(connector: Connector, color: string, paving: string): Bu
         ],
         grad: [0.45, 1],
       }),
-      box(alongX ? deckRun : connector.width - 0.12, WEARING_COURSE, alongX ? connector.width - 0.12 : deckRun, {
+      box(alongX ? deckRun : apron - 0.12, WEARING_COURSE, alongX ? apron - 0.12 : deckRun, {
         color: paving,
         position: [
           end[0] + (alongX ? deckCentre : 0),
@@ -550,112 +746,5 @@ function spiralGeometry(connector: Connector, color: string, paving: string): Bu
   return buildProp(parts);
 }
 
-/**
- * A lift: an open tower you ride up the inside of.
- *
- * Nothing about it moves, and it does not need to. The route through a lift is
- * an L — in at the bottom, straight up, out at the top — so a figure crossing
- * one rises *inside the frame*, between its corner posts, in full view. The
- * tower supplies the reason; the figure supplies the motion.
- */
-function liftGeometry(connector: Connector, color: string, paving: string): BufferGeometry {
-  const up = connector.b[1] >= connector.a[1];
-  const low = up ? connector.a : connector.b;
-  const high = up ? connector.b : connector.a;
 
-  // The shaft stands over the high end — that is where `via` sends the figure.
-  const x = high[0];
-  const z = high[2];
-  const rise = high[1] - low[1];
-  const half = Math.max(0.75, connector.width * 0.45);
-  const post = 0.17;
-  const parts: Part[] = [];
 
-  for (const sx of [-1, 1]) {
-    for (const sz of [-1, 1]) {
-      parts.push(
-        box(post, rise + 1.5, post, {
-          color: paving,
-          position: [x + sx * half, low[1] - 0.9, z + sz * half],
-          grad: [0.5, 1],
-        }),
-      );
-    }
-  }
-
-  // Cross-braces up the frame, which is what stops four posts reading as four
-  // posts and starts them reading as a tower.
-  const rungs = Math.max(2, Math.round(rise / 1.3));
-  for (let i = 1; i <= rungs; i++) {
-    const y = low[1] + (rise * i) / rungs;
-    for (const sz of [-1, 1]) {
-      parts.push(
-        box(half * 2 + post, 0.12, post * 0.8, {
-          color,
-          position: [x, y, z + sz * half],
-          grad: [0.6, 1],
-        }),
-      );
-    }
-    for (const sx of [-1, 1]) {
-      parts.push(
-        box(post * 0.8, 0.12, half * 2 + post, {
-          color,
-          position: [x + sx * half, y, z],
-          grad: [0.6, 1],
-        }),
-      );
-    }
-  }
-
-  // The cab, parked at the bottom, and the head the rope runs over. Both in
-  // the paving tone: a lift cut from the dark side colour reads as timber
-  // scaffolding, and there is no timber anywhere else in this office.
-  parts.push(
-    box(half * 1.6, 0.14, half * 1.6, {
-      color: paving,
-      position: [x, low[1] - 0.14, z],
-      grad: [0.9, 1],
-    }),
-    box(half * 1.75, 0.16, half * 1.75, {
-      color,
-      position: [x, low[1] - 0.3, z],
-      grad: [0.45, 1],
-    }),
-    // A head frame, stepped, so the tower ends rather than stops.
-    box(half * 2.1, 0.2, half * 2.1, {
-      color: paving,
-      position: [x, high[1] + 0.5, z],
-      grad: [0.72, 1],
-    }),
-    box(half * 1.5, 0.22, half * 1.5, {
-      color,
-      position: [x, high[1] + 0.7, z],
-      grad: [0.55, 1],
-    }),
-  );
-
-  // The walk in: a short deck from the lower platform to the foot of the shaft.
-  const alongX = connector.axis === 'x';
-  const run = alongX ? Math.abs(x - low[0]) : Math.abs(z - low[2]);
-  if (run > 0.2) {
-    parts.push(
-      box(alongX ? run + 0.4 : connector.width, 0.22 - WEARING_COURSE, alongX ? connector.width : run + 0.4, {
-        color,
-        position: [alongX ? (x + low[0]) / 2 : x, low[1] - 0.22, alongX ? z : (z + low[2]) / 2],
-        grad: [0.45, 1],
-      }),
-      // Lifted clear of the floor rather than let into it. A lift serving a
-      // stacked terrace stands *on* its host, so this deck lies across the
-      // host's own paving instead of bridging a gap — an apron at the foot of
-      // the shaft, which is what it should have looked like anyway.
-      box(alongX ? run : connector.width - 0.12, WEARING_COURSE, alongX ? connector.width - 0.12 : run, {
-        color: paving,
-        position: [alongX ? (x + low[0]) / 2 : x, low[1] + FLOOR_LIFT, alongX ? z : (z + low[2]) / 2],
-        grad: [0.9, 1],
-      }),
-    );
-  }
-
-  return buildProp(parts);
-}

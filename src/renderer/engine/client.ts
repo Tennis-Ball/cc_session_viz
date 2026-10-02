@@ -14,6 +14,7 @@ class EngineClient {
   private readonly eventListeners = new Set<EventListener>();
   private started = false;
   private subscription = '';
+  private options = '';
 
   start(): void {
     if (this.started) return;
@@ -65,6 +66,17 @@ class EngineClient {
     const keep = new Set(ids);
     const stale = [...previous].filter((id) => id && !keep.has(id));
     if (stale.length) useTranscripts.getState().drop(stale);
+  }
+
+  /**
+   * Settings the engine applies rather than the renderer. Deduped, because
+   * prefs re-publish on every change and most changes are about colour.
+   */
+  setOptions(options: { hideSdkSessions: boolean; endedGraceMs: number }): void {
+    const next = `${options.hideSdkSessions}:${options.endedGraceMs}`;
+    if (next === this.options) return;
+    this.options = next;
+    this.post({ type: 'setOptions', ...options });
   }
 
   onVisualEvent(listener: EventListener): () => void {

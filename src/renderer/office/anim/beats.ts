@@ -18,6 +18,7 @@ export type BeatKind =
   | 'turnBack' // a tool call was denied
   | 'startle' // an API error or rate limit
   | 'lookUp' // a watch fired
+  | 'speak' // taking a turn in a conversation
   | 'nod'; // a smaller acknowledgement: a skill, an edit, a publish
 
 interface BeatSpec {
@@ -37,6 +38,7 @@ const SPECS: Record<BeatKind, BeatSpec> = {
   debrief: { priority: 4, durationMs: 1200 },
   stretch: { priority: 3, durationMs: 1400 },
   lookUp: { priority: 3, durationMs: 1000 },
+  speak: { priority: 2, durationMs: 1000 },
   nod: { priority: 2, durationMs: 700 },
 };
 
@@ -158,6 +160,27 @@ export function modifierFor(kind: BeatKind, t: number): BeatModifier {
       return { ...NEUTRAL, lift: 0.13 * Math.abs(jolt(t)), squash: 1 - 0.08 * jolt(t), flash: 1 - t };
     case 'lookUp':
       return { ...NEUTRAL, tilt: -0.26 * arch(t), lift: 0.03 * arch(t) };
+    case 'speak': {
+      /*
+       * Big, because a nod is not.
+       *
+       * A conversation was two figures leaning seven degrees at each other in
+       * turn, and at the size a figure is actually drawn — thirty pixels on a
+       * campus you can see all of — that is two pixels of movement. Nobody
+       * could tell. This is the same gesture at nearly three times the throw,
+       * with a lift under it so the whole figure moves rather than just its
+       * head, and a half-turn of sway so it reads as somebody holding forth
+       * rather than somebody bowing.
+       */
+      const fade = 1 - t * 0.35;
+      return {
+        ...NEUTRAL,
+        tilt: 0.3 * Math.sin(Math.PI * 2 * t) * fade,
+        lift: 0.085 * arch(t),
+        spin: 0.17 * Math.sin(Math.PI * 2 * t) * fade,
+        squash: 1 + 0.045 * arch(t),
+      };
+    }
     case 'nod':
       return { ...NEUTRAL, tilt: 0.13 * Math.sin(Math.PI * 2 * t) * (1 - t * 0.5) };
     default:

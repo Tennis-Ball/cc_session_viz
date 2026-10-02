@@ -28,6 +28,11 @@ interface SlotEntry extends SlotClaim {
   occupant: string | null;
 }
 
+/** Nobody is given a spot closer than this to somebody already standing. */
+const ELBOW_ROOM = 0.95;
+/** How far along the spiral to look for one before settling for the best. */
+const OVERFLOW_TRIES = 24;
+
 export class SlotPool {
   private readonly slots = new Map<string, SlotEntry[]>();
   private readonly claims = new Map<string, SlotEntry>();
@@ -107,12 +112,7 @@ export class SlotPool {
       return chosen;
     }
 
-    const overflow = this.overflowSlot(platformId, entries.length + this.overflowCount(platformId), kind);
-    const grid = this.occupancy.get(platformId);
-    if (grid) {
-      const [x, z] = grid.nearestFree(overflow.position[0], overflow.position[2]);
-      overflow.position = [x, overflow.position[1], z];
-    }
+    const overflow = this.spaced(platformId, entries, kind);
     overflow.occupant = agentId;
     entries.push(overflow);
     this.slots.set(platformId, entries);
@@ -129,6 +129,45 @@ export class SlotPool {
 
   claimOf(agentId: string): SlotClaim | undefined {
     return this.claims.get(agentId);
+  }
+
+  /**
+   * An overflow spot with room around it.
+   *
+   * The spiral is out of phase with itself, which keeps overflow spots apart
+   * from each other and says nothing at all about the prop anchors they are
+   * laid out among — so the twelfth figure at a busy zone could be handed a
+   * patch of floor three quarters of a body from somebody already at the table.
+   * `separateFigures` would part them, but its nudge is capped at about half a
+   * body because the same nudge must not push anyone off a staircase, so
+   * leaning on it here is leaning on the wrong thing. The layout can simply not
+   * do it, and on a platform too cramped to oblige it gives up with the roomiest
+   * spot it found rather than the first.
+   */
+  private spaced(platformId: string, entries: SlotEntry[], kind: SlotKind): SlotEntry {
+    const grid = this.occupancy.get(platformId);
+    const taken = entries.filter((entry) => entry.occupant !== null);
+    const from = entries.length + this.overflowCount(platformId);
+    let best: SlotEntry | null = null;
+    let bestGap = -1;
+
+    for (let i = 0; i < OVERFLOW_TRIES; i += 1) {
+      const slot = this.overflowSlot(platformId, from + i, kind);
+      if (grid) {
+        const [x, z] = grid.nearestFree(slot.position[0], slot.position[2]);
+        slot.position = [x, slot.position[1], z];
+      }
+      let gap = Infinity;
+      for (const other of taken) {
+        gap = Math.min(gap, Math.hypot(slot.position[0] - other.position[0], slot.position[2] - other.position[2]));
+      }
+      if (gap >= ELBOW_ROOM) return slot;
+      if (gap > bestGap) {
+        bestGap = gap;
+        best = slot;
+      }
+    }
+    return best ?? this.overflowSlot(platformId, from, kind);
   }
 
   private overflowCount(platformId: string): number {

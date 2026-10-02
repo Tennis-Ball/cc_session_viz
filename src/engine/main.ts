@@ -40,6 +40,9 @@ let mode: DataMode =
 const publisher = new Publisher(store, (msg) => {
   if (msg.type === 'subscribeTranscripts') hub.setSubscriptions(msg.ids);
   if (msg.type === 'setDataMode') setMode(msg.mode);
+  if (msg.type === 'setOptions') {
+    live?.setOptions({ hideSdkSessions: msg.hideSdkSessions, endedGraceMs: msg.endedGraceMs });
+  }
 });
 
 /**

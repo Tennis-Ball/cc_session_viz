@@ -31,10 +31,18 @@ module.exports = {
   files: ['out/**', 'resources/**', 'package.json'],
 
   mac: {
-    // One download that runs natively on both Apple Silicon and Intel, so
-    // there is nothing for someone to get wrong before the app has even
-    // started. It costs about 110MB over a single-architecture build.
-    target: [{ target: 'dmg', arch: ['universal'] }],
+    /*
+     * One download that runs natively on both Apple Silicon and Intel, so
+     * there is nothing for someone to get wrong before the app has even
+     * started. It costs about 110MB over a single-architecture build.
+     *
+     * `ATRIUM_ARCH=arm64` builds only this machine's slice, which is what
+     * `npm run dist:fast` is for. It has to come through the environment: the
+     * arch is pinned *here*, and a pinned target wins over `--arm64` on the
+     * command line — so `dist:fast` spent months quietly building the same
+     * universal binary `dist` does and being no faster at all.
+     */
+    target: [{ target: 'dmg', arch: [process.env.ATRIUM_ARCH === 'arm64' ? 'arm64' : 'universal'] }],
     category: 'public.app-category.developer-tools',
     icon: 'resources/icon.icns',
     darkModeSupport: true,

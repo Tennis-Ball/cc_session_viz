@@ -15,13 +15,12 @@
     "test:watch": "vitest",
     "e2e": "playwright test",
     "dist": "electron-vite build && electron-builder --mac --universal --config electron-builder.config.cjs --publish never",
-    "dist:fast": "electron-vite build && electron-builder --mac --arm64 --config electron-builder.config.cjs --publish never"
+    "dist:fast": "ATRIUM_ARCH=arm64 electron-vite build && ATRIUM_ARCH=arm64 electron-builder --mac --config electron-builder.config.cjs --publish never"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.6",
     "@react-three/fiber": "^9.3.0",
     "@xyflow/react": "^12.11.5",
-    "cmdk": "^1.1.1",
     "react": "~19.2.0",
     "react-dom": "~19.2.0",
     "three": "^0.182.0",

@@ -38,7 +38,25 @@ import { rng, type DataSource } from '../types';
 
 const TICK_MS = 250;
 /** The cast drifts inside this band rather than sitting at a constant. */
-const POPULATION: readonly [number, number] = [2, 6];
+const DEFAULT_POPULATION: readonly [number, number] = [2, 6];
+
+/**
+ * How many desks the simulation is allowed to fill.
+ *
+ * `CCV_SIM_SESSIONS=30` pins it, which is the only way to see a crowded office
+ * at all: the simulation is the only source anyone can run on demand, and it
+ * held between two and six sessions, so the layout, the label spacing, the
+ * desk spiral and the frame rate at thirty had never actually been looked at —
+ * they were designed for and then asserted about in the abstract. A number
+ * here is not a feature, it is the harness for a state the app claims to
+ * support.
+ */
+const POPULATION: readonly [number, number] = (() => {
+  const pinned = Number.parseInt(process.env['CCV_SIM_SESSIONS'] ?? '', 10);
+  if (!Number.isFinite(pinned) || pinned <= 0) return DEFAULT_POPULATION;
+  const capped = Math.min(60, pinned);
+  return [capped, capped];
+})();
 /** How long a population target holds before it drifts again. */
 const DRIFT_MS: readonly [number, number] = [60_000, 180_000];
 /** Arrivals are spaced out, so nobody watches four desks appear at once. */
@@ -195,6 +213,12 @@ export class AmbientSource implements DataSource {
 
   /** An office breathes: people arrive, people leave, the room is never level. */
   private population(now: Ms): void {
+    // Pull the target into the band before anything else. It is set from the
+    // warm start and then only ever nudged by one every minute or two, so a
+    // band that moves — which is what `CCV_SIM_SESSIONS` does — would otherwise
+    // take the better part of an hour to be obeyed, or never be reached at all.
+    this.target = Math.min(POPULATION[1], Math.max(POPULATION[0], this.target));
+
     if (now >= this.nextDriftAt) {
       const step = this.cast() < 0.5 ? -1 : 1;
       this.target = Math.min(POPULATION[1], Math.max(POPULATION[0], this.target + step));
@@ -203,7 +227,10 @@ export class AmbientSource implements DataSource {
 
     if (this.sessions.size < this.target && now >= this.nextArrivalAt) {
       this.spawnSession(now);
-      this.nextArrivalAt = now + span(ARRIVAL_MS, this.cast);
+      // A pinned cast arrives briskly: waiting three quarters of an hour for
+      // the thirtieth desk defeats the point of asking for thirty.
+      const pinned = POPULATION[0] === POPULATION[1];
+      this.nextArrivalAt = now + (pinned ? 250 : span(ARRIVAL_MS, this.cast));
     }
 
     if (this.sessions.size > this.target) {
@@ -230,13 +257,15 @@ export class AmbientSource implements DataSource {
 
   private apply(session: AmbientSession, beat: Beat, at: Ms, backfill: boolean): void {
     for (const signal of beat.signals) {
-      session.runtime.applySignal({ ...signal, at } as Signal, undefined, backfill);
+      session.runtime.applySignal({ ...signal, at } as Signal, beat.agent, backfill);
     }
     // The registry file is what the liveness machine reads for "busy". Claude
     // Code writes it when a turn opens and again when it closes; the quiet
     // stretch in between must not flip it back, or nothing is ever idle.
-    if (beat.signals.some((s) => s.s === 'prompt')) session.slot.status = 'busy';
-    if (beat.signals.some((s) => s.s === 'turnEnd')) session.slot.status = 'idle';
+    if (!beat.agent) {
+      if (beat.signals.some((s) => s.s === 'prompt')) session.slot.status = 'busy';
+      if (beat.signals.some((s) => s.s === 'turnEnd')) session.slot.status = 'idle';
+    }
     session.nextBeatAt = at + beat.after;
   }
 
@@ -312,7 +341,7 @@ export class AmbientSource implements DataSource {
         if (!this.warming) this.store.emit(event);
       },
       noteUnknown: () => {},
-      resolveTarget: (to): Endpoint => this.resolvePeer(to),
+      resolveTarget: (to, from): Endpoint => this.resolvePeer(to, from),
       colorIndex,
       ambient: true,
       autoCompactPct: AUTO_COMPACT_PCT,
@@ -419,7 +448,23 @@ export class AmbientSource implements DataSource {
     return names;
   }
 
-  private resolvePeer(to: string): Endpoint {
+  /**
+   * Who a `SendMessage` was addressed to, the same three ways the live source
+   * reads it.
+   *
+   * This used to look at session names only, so the two kinds of message that
+   * happen *inside* a session — an agent briefing one of its subagents, and a
+   * subagent reporting back — both resolved to an external label. Nothing could
+   * be drawn between two figures that were standing next to each other, which
+   * is exactly the pair worth drawing something between.
+   */
+  private resolvePeer(to: string, fromSlot: string): Endpoint {
+    if (!to) return { kind: 'external', label: 'unknown' };
+    if (to === 'main') {
+      const session = this.sessions.get(fromSlot);
+      return session ? { kind: 'agent', agentId: session.runtime.main.id } : { kind: 'external', label: 'main' };
+    }
+    if (/^a[0-9a-f]{16}$/.test(to)) return { kind: 'agent', agentId: to };
     for (const session of this.sessions.values()) {
       if (session.slot.name === to) return { kind: 'session', slotId: session.slot.slotId };
     }
