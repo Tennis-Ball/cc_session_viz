@@ -1,6 +1,6 @@
 {
   "name": "atrium",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A visual companion for Claude Code sessions",
   "author": "Mason Choi <choi.mason@gmail.com>",
   "license": "MIT",
